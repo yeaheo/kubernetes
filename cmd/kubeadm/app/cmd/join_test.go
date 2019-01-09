@@ -24,8 +24,8 @@ import (
 	"testing"
 
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmapiext "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha1"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	kubeadmscheme "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/scheme"
+	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
 )
 
 const (
@@ -70,16 +70,14 @@ func TestNewValidJoin(t *testing.T) {
 
 	testCases := []struct {
 		name                  string
-		args                  []string
 		skipPreFlight         bool
 		cfgPath               string
 		configToWrite         string
-		featureGatesString    string
 		ignorePreflightErrors []string
 		testJoinValidate      bool
 		testJoinRun           bool
 		cmdPersistentFlags    map[string]string
-		nodeConfig            *kubeadm.NodeConfiguration
+		nodeConfig            *kubeadm.JoinConfiguration
 		expectedError         bool
 	}{
 		{
@@ -109,11 +107,6 @@ func TestNewValidJoin(t *testing.T) {
 			configToWrite:         testConfig,
 			ignorePreflightErrors: []string{"some-unsupported-preflight-arg"},
 			expectedError:         true,
-		},
-		{
-			name:               "invalid: incorrect featureGatesString",
-			featureGatesString: "bad-feature-gate-string",
-			expectedError:      true,
 		},
 		{
 			name:             "invalid: fail Join.Validate() with wrong flags",
@@ -146,8 +139,8 @@ func TestNewValidJoin(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cfg := &kubeadmapiext.NodeConfiguration{}
-	legacyscheme.Scheme.Default(cfg)
+	cfg := &kubeadmapiv1beta1.JoinConfiguration{}
+	kubeadmscheme.Scheme.Default(cfg)
 
 	errorFormat := "Test case %q: NewValidJoin expected error: %v, saw: %v, error: %v"
 
@@ -156,14 +149,15 @@ func TestNewValidJoin(t *testing.T) {
 			t.Fatalf("Unable to write file %q: %v", tc.cfgPath, err)
 		}
 
-		join, err := NewValidJoin(cfg, tc.args, tc.skipPreFlight, tc.cfgPath, tc.featureGatesString, tc.ignorePreflightErrors)
 		cmd := NewCmdJoin(&out)
-
 		if tc.cmdPersistentFlags != nil {
 			for key, value := range tc.cmdPersistentFlags {
 				cmd.PersistentFlags().Set(key, value)
 			}
 		}
+
+		join, err := NewValidJoin(cmd.PersistentFlags(), cfg, tc.cfgPath, tc.ignorePreflightErrors)
+
 		if tc.nodeConfig != nil {
 			join.cfg = tc.nodeConfig
 		}
@@ -172,11 +166,6 @@ func TestNewValidJoin(t *testing.T) {
 		if err == nil && tc.testJoinRun {
 			err = join.Run(&out)
 			if (err != nil) != tc.expectedError {
-				t.Fatalf(errorFormat, tc.name, tc.expectedError, (err != nil), err)
-			}
-			// test Join.Validate()
-		} else if err == nil && tc.testJoinValidate {
-			if err = join.Validate(cmd); (err != nil) != tc.expectedError {
 				t.Fatalf(errorFormat, tc.name, tc.expectedError, (err != nil), err)
 			}
 			// check error for NewValidJoin()

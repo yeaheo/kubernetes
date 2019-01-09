@@ -30,7 +30,7 @@ import (
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
 	"k8s.io/kubernetes/pkg/scheduler/volumebinder"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 )
 
 // PluginFactoryArgs are passed to all plugin factory functions.
@@ -41,6 +41,7 @@ type PluginFactoryArgs struct {
 	ReplicaSetLister               algorithm.ReplicaSetLister
 	StatefulSetLister              algorithm.StatefulSetLister
 	NodeLister                     algorithm.NodeLister
+	PDBLister                      algorithm.PDBLister
 	NodeInfo                       predicates.NodeInfo
 	PVInfo                         predicates.PersistentVolumeInfo
 	PVCInfo                        predicates.PersistentVolumeClaimInfo
@@ -53,10 +54,10 @@ type PluginFactoryArgs struct {
 type PriorityMetadataProducerFactory func(PluginFactoryArgs) algorithm.PriorityMetadataProducer
 
 // PredicateMetadataProducerFactory produces PredicateMetadataProducer from the given args.
-type PredicateMetadataProducerFactory func(PluginFactoryArgs) algorithm.PredicateMetadataProducer
+type PredicateMetadataProducerFactory func(PluginFactoryArgs) predicates.PredicateMetadataProducer
 
 // FitPredicateFactory produces a FitPredicate from the given args.
-type FitPredicateFactory func(PluginFactoryArgs) algorithm.FitPredicate
+type FitPredicateFactory func(PluginFactoryArgs) predicates.FitPredicate
 
 // PriorityFunctionFactory produces a PriorityConfig from the given args.
 // DEPRECATED
@@ -102,8 +103,8 @@ type AlgorithmProviderConfig struct {
 
 // RegisterFitPredicate registers a fit predicate with the algorithm
 // registry. Returns the name with which the predicate was registered.
-func RegisterFitPredicate(name string, predicate algorithm.FitPredicate) string {
-	return RegisterFitPredicateFactory(name, func(PluginFactoryArgs) algorithm.FitPredicate { return predicate })
+func RegisterFitPredicate(name string, predicate predicates.FitPredicate) string {
+	return RegisterFitPredicateFactory(name, func(PluginFactoryArgs) predicates.FitPredicate { return predicate })
 }
 
 // RemoveFitPredicate removes a fit predicate from factory.
@@ -166,14 +167,25 @@ func InsertPredicateKeyToAlgorithmProviderMap(key string) {
 	return
 }
 
+// InsertPriorityKeyToAlgorithmProviderMap inserts a priority function to all algorithmProviders which are in algorithmProviderMap.
+func InsertPriorityKeyToAlgorithmProviderMap(key string) {
+	schedulerFactoryMutex.Lock()
+	defer schedulerFactoryMutex.Unlock()
+
+	for _, provider := range algorithmProviderMap {
+		provider.PriorityFunctionKeys.Insert(key)
+	}
+	return
+}
+
 // RegisterMandatoryFitPredicate registers a fit predicate with the algorithm registry, the predicate is used by
 // kubelet, DaemonSet; it is always included in configuration. Returns the name with which the predicate was
 // registered.
-func RegisterMandatoryFitPredicate(name string, predicate algorithm.FitPredicate) string {
+func RegisterMandatoryFitPredicate(name string, predicate predicates.FitPredicate) string {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 	validateAlgorithmNameOrDie(name)
-	fitPredicateMap[name] = func(PluginFactoryArgs) algorithm.FitPredicate { return predicate }
+	fitPredicateMap[name] = func(PluginFactoryArgs) predicates.FitPredicate { return predicate }
 	mandatoryFitPredicates.Insert(name)
 	return name
 }
@@ -199,7 +211,7 @@ func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 	// generate the predicate function, if a custom type is requested
 	if policy.Argument != nil {
 		if policy.Argument.ServiceAffinity != nil {
-			predicateFactory = func(args PluginFactoryArgs) algorithm.FitPredicate {
+			predicateFactory = func(args PluginFactoryArgs) predicates.FitPredicate {
 				predicate, precomputationFunction := predicates.NewServiceAffinityPredicate(
 					args.PodLister,
 					args.ServiceLister,
@@ -212,7 +224,7 @@ func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 				return predicate
 			}
 		} else if policy.Argument.LabelsPresence != nil {
-			predicateFactory = func(args PluginFactoryArgs) algorithm.FitPredicate {
+			predicateFactory = func(args PluginFactoryArgs) predicates.FitPredicate {
 				return predicates.NewNodeLabelPredicate(
 					policy.Argument.LabelsPresence.Labels,
 					policy.Argument.LabelsPresence.Presence,
@@ -221,12 +233,12 @@ func RegisterCustomFitPredicate(policy schedulerapi.PredicatePolicy) string {
 		}
 	} else if predicateFactory, ok = fitPredicateMap[policy.Name]; ok {
 		// checking to see if a pre-defined predicate is requested
-		glog.V(2).Infof("Predicate type %s already registered, reusing.", policy.Name)
+		klog.V(2).Infof("Predicate type %s already registered, reusing.", policy.Name)
 		return policy.Name
 	}
 
 	if predicateFactory == nil {
-		glog.Fatalf("Invalid configuration: Predicate type not found for %s", policy.Name)
+		klog.Fatalf("Invalid configuration: Predicate type not found for %s", policy.Name)
 	}
 
 	return RegisterFitPredicateFactory(policy.Name, predicateFactory)
@@ -322,9 +334,18 @@ func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 				},
 				Weight: policy.Weight,
 			}
+		} else if policy.Argument.RequestedToCapacityRatioArguments != nil {
+			pcf = &PriorityConfigFactory{
+				MapReduceFunction: func(args PluginFactoryArgs) (algorithm.PriorityMapFunction, algorithm.PriorityReduceFunction) {
+					scoringFunctionShape := buildScoringFunctionShapeFromRequestedToCapacityRatioArguments(policy.Argument.RequestedToCapacityRatioArguments)
+					p := priorities.RequestedToCapacityRatioResourceAllocationPriority(scoringFunctionShape)
+					return p.PriorityMap, nil
+				},
+				Weight: policy.Weight,
+			}
 		}
 	} else if existingPcf, ok := priorityFunctionMap[policy.Name]; ok {
-		glog.V(2).Infof("Priority type %s already registered, reusing.", policy.Name)
+		klog.V(2).Infof("Priority type %s already registered, reusing.", policy.Name)
 		// set/update the weight based on the policy
 		pcf = &PriorityConfigFactory{
 			Function:          existingPcf.Function,
@@ -334,10 +355,23 @@ func RegisterCustomPriorityFunction(policy schedulerapi.PriorityPolicy) string {
 	}
 
 	if pcf == nil {
-		glog.Fatalf("Invalid configuration: Priority type not found for %s", policy.Name)
+		klog.Fatalf("Invalid configuration: Priority type not found for %s", policy.Name)
 	}
 
 	return RegisterPriorityConfigFactory(policy.Name, *pcf)
+}
+
+func buildScoringFunctionShapeFromRequestedToCapacityRatioArguments(arguments *schedulerapi.RequestedToCapacityRatioArguments) priorities.FunctionShape {
+	n := len(arguments.UtilizationShape)
+	points := make([]priorities.FunctionShapePoint, 0, n)
+	for _, point := range arguments.UtilizationShape {
+		points = append(points, priorities.FunctionShapePoint{Utilization: int64(point.Utilization), Score: int64(point.Score)})
+	}
+	shape, err := priorities.NewFunctionShape(points)
+	if err != nil {
+		klog.Fatalf("invalid RequestedToCapacityRatioPriority arguments: %s", err.Error())
+	}
+	return shape
 }
 
 // IsPriorityFunctionRegistered is useful for testing providers.
@@ -374,11 +408,11 @@ func GetAlgorithmProvider(name string) (*AlgorithmProviderConfig, error) {
 	return &provider, nil
 }
 
-func getFitPredicateFunctions(names sets.String, args PluginFactoryArgs) (map[string]algorithm.FitPredicate, error) {
+func getFitPredicateFunctions(names sets.String, args PluginFactoryArgs) (map[string]predicates.FitPredicate, error) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 
-	predicates := map[string]algorithm.FitPredicate{}
+	predicates := map[string]predicates.FitPredicate{}
 	for _, name := range names.List() {
 		factory, ok := fitPredicateMap[name]
 		if !ok {
@@ -407,12 +441,12 @@ func getPriorityMetadataProducer(args PluginFactoryArgs) (algorithm.PriorityMeta
 	return priorityMetadataProducer(args), nil
 }
 
-func getPredicateMetadataProducer(args PluginFactoryArgs) (algorithm.PredicateMetadataProducer, error) {
+func getPredicateMetadataProducer(args PluginFactoryArgs) (predicates.PredicateMetadataProducer, error) {
 	schedulerFactoryMutex.Lock()
 	defer schedulerFactoryMutex.Unlock()
 
 	if predicateMetadataProducer == nil {
-		return algorithm.EmptyPredicateMetadataProducer, nil
+		return predicates.EmptyPredicateMetadataProducer, nil
 	}
 	return predicateMetadataProducer(args), nil
 }
@@ -466,7 +500,7 @@ var validName = regexp.MustCompile("^[a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])$")
 
 func validateAlgorithmNameOrDie(name string) {
 	if !validName.MatchString(name) {
-		glog.Fatalf("Algorithm name %v does not match the name validation regexp \"%v\".", name, validName)
+		klog.Fatalf("Algorithm name %v does not match the name validation regexp \"%v\".", name, validName)
 	}
 }
 
@@ -480,7 +514,7 @@ func validatePredicateOrDie(predicate schedulerapi.PredicatePolicy) {
 			numArgs++
 		}
 		if numArgs != 1 {
-			glog.Fatalf("Exactly 1 predicate argument is required, numArgs: %v, Predicate: %s", numArgs, predicate.Name)
+			klog.Fatalf("Exactly 1 predicate argument is required, numArgs: %v, Predicate: %s", numArgs, predicate.Name)
 		}
 	}
 }
@@ -494,8 +528,11 @@ func validatePriorityOrDie(priority schedulerapi.PriorityPolicy) {
 		if priority.Argument.LabelPreference != nil {
 			numArgs++
 		}
+		if priority.Argument.RequestedToCapacityRatioArguments != nil {
+			numArgs++
+		}
 		if numArgs != 1 {
-			glog.Fatalf("Exactly 1 priority argument is required, numArgs: %v, Priority: %s", numArgs, priority.Name)
+			klog.Fatalf("Exactly 1 priority argument is required, numArgs: %v, Priority: %s", numArgs, priority.Name)
 		}
 	}
 }

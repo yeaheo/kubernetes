@@ -17,6 +17,7 @@ limitations under the License.
 package master
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"io/ioutil"
@@ -64,7 +65,7 @@ import (
 )
 
 // setUp is a convience function for setting up for (most) tests.
-func setUp(t *testing.T) (*etcdtesting.EtcdTestServer, Config, informers.SharedInformerFactory, *assert.Assertions) {
+func setUp(t *testing.T) (*etcdtesting.EtcdTestServer, Config, *assert.Assertions) {
 	server, storageConfig := etcdtesting.NewUnsecuredEtcd3TestClientServer(t)
 
 	config := &Config{
@@ -108,17 +109,37 @@ func setUp(t *testing.T) (*etcdtesting.EtcdTestServer, Config, informers.SharedI
 	config.GenericConfig.LoopbackClientConfig = &restclient.Config{APIPath: "/api", ContentConfig: restclient.ContentConfig{NegotiatedSerializer: legacyscheme.Codecs}}
 	config.ExtraConfig.KubeletClientConfig = kubeletclient.KubeletClientConfig{Port: 10250}
 	config.ExtraConfig.ProxyTransport = utilnet.SetTransportDefaults(&http.Transport{
-		Dial:            func(network, addr string) (net.Conn, error) { return nil, nil },
+		DialContext:     func(ctx context.Context, network, addr string) (net.Conn, error) { return nil, nil },
 		TLSClientConfig: &tls.Config{},
 	})
+
+	// set fake SecureServingInfo because the listener port is needed for the kubernetes service
+	config.GenericConfig.SecureServing = &genericapiserver.SecureServingInfo{Listener: fakeLocalhost443Listener{}}
 
 	clientset, err := kubernetes.NewForConfig(config.GenericConfig.LoopbackClientConfig)
 	if err != nil {
 		t.Fatalf("unable to create client set due to %v", err)
 	}
-	sharedInformers := informers.NewSharedInformerFactory(clientset, config.GenericConfig.LoopbackClientConfig.Timeout)
+	config.ExtraConfig.VersionedInformers = informers.NewSharedInformerFactory(clientset, config.GenericConfig.LoopbackClientConfig.Timeout)
 
-	return server, *config, sharedInformers, assert.New(t)
+	return server, *config, assert.New(t)
+}
+
+type fakeLocalhost443Listener struct{}
+
+func (fakeLocalhost443Listener) Accept() (net.Conn, error) {
+	return nil, nil
+}
+
+func (fakeLocalhost443Listener) Close() error {
+	return nil
+}
+
+func (fakeLocalhost443Listener) Addr() net.Addr {
+	return &net.TCPAddr{
+		IP:   net.IPv4(127, 0, 0, 1),
+		Port: 443,
+	}
 }
 
 // TestLegacyRestStorageStrategies ensures that all Storage objects which are using the generic registry Store have
@@ -181,9 +202,9 @@ func TestCertificatesRestStorageStrategies(t *testing.T) {
 }
 
 func newMaster(t *testing.T) (*Master, *etcdtesting.EtcdTestServer, Config, *assert.Assertions) {
-	etcdserver, config, sharedInformers, assert := setUp(t)
+	etcdserver, config, assert := setUp(t)
 
-	master, err := config.Complete(sharedInformers).New(genericapiserver.NewEmptyDelegate())
+	master, err := config.Complete().New(genericapiserver.NewEmptyDelegate())
 	if err != nil {
 		t.Fatalf("Error in bringing up the master: %v", err)
 	}
@@ -255,6 +276,22 @@ func TestGetNodeAddresses(t *testing.T) {
 	addrs, err = addressProvider.externalAddresses()
 	assert.NoError(err, "addresses should not have returned an error.")
 	assert.Equal([]string{"127.0.0.1", "127.0.0.1"}, addrs)
+}
+
+func TestGetNodeAddressesWithOnlySomeExternalIP(t *testing.T) {
+	assert := assert.New(t)
+
+	fakeNodeClient := fake.NewSimpleClientset(makeNodeList([]string{"node1", "node2", "node3"}, apiv1.NodeResources{})).Core().Nodes()
+	addressProvider := nodeAddressProvider{fakeNodeClient}
+
+	// Pass case with 1 External type IP (index == 1) and nodes (indexes 0 & 2) have no External IP.
+	nodes, _ := fakeNodeClient.List(metav1.ListOptions{})
+	nodes.Items[1].Status.Addresses = []apiv1.NodeAddress{{Type: apiv1.NodeExternalIP, Address: "127.0.0.1"}}
+	fakeNodeClient.Update(&nodes.Items[1])
+
+	addrs, err := addressProvider.externalAddresses()
+	assert.NoError(err, "addresses should not have returned an error.")
+	assert.Equal([]string{"127.0.0.1"}, addrs)
 }
 
 func decodeResponse(resp *http.Response, obj interface{}) error {

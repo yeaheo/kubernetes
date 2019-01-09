@@ -27,6 +27,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	openapigen "k8s.io/kubernetes/pkg/generated/openapi"
@@ -40,11 +41,11 @@ import (
 // TestValidOpenAPISpec verifies that the open api is added
 // at the proper endpoint and the spec is valid.
 func TestValidOpenAPISpec(t *testing.T) {
-	etcdserver, config, sharedInformers, assert := setUp(t)
+	etcdserver, config, assert := setUp(t)
 	defer etcdserver.Terminate(t)
 
 	config.GenericConfig.EnableIndex = true
-	config.GenericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(openapigen.GetOpenAPIDefinitions, legacyscheme.Scheme)
+	config.GenericConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(openapigen.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(legacyscheme.Scheme))
 	config.GenericConfig.OpenAPIConfig.Info = &spec.Info{
 		InfoProps: spec.InfoProps{
 			Title:   "Kubernetes",
@@ -53,7 +54,7 @@ func TestValidOpenAPISpec(t *testing.T) {
 	}
 	config.GenericConfig.SwaggerConfig = genericapiserver.DefaultSwaggerConfig()
 
-	master, err := config.Complete(sharedInformers).New(genericapiserver.NewEmptyDelegate())
+	master, err := config.Complete().New(genericapiserver.NewEmptyDelegate())
 	if err != nil {
 		t.Fatalf("Error in bringing up the master: %v", err)
 	}
