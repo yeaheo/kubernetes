@@ -285,6 +285,18 @@ func dropDisabledFields(
 		podSpec = &api.PodSpec{}
 	}
 
+	if !utilfeature.DefaultFeatureGate.Enabled(features.TokenRequestProjection) &&
+		!tokenRequestProjectionInUse(oldPodSpec) {
+		for i := range podSpec.Volumes {
+			if podSpec.Volumes[i].Projected != nil {
+				for j := range podSpec.Volumes[i].Projected.Sources {
+					podSpec.Volumes[i].Projected.Sources[j].ServiceAccountToken = nil
+				}
+			}
+
+		}
+	}
+
 	if !utilfeature.DefaultFeatureGate.Enabled(features.AppArmor) && !appArmorInUse(oldPodAnnotations) {
 		for k := range podAnnotations {
 			if strings.HasPrefix(k, apparmor.ContainerAnnotationKeyPrefix) {
@@ -293,11 +305,27 @@ func dropDisabledFields(
 		}
 	}
 
+	if !utilfeature.DefaultFeatureGate.Enabled(features.PodShareProcessNamespace) && !shareProcessNamespaceInUse(oldPodSpec) {
+		if podSpec.SecurityContext != nil {
+			podSpec.SecurityContext.ShareProcessNamespace = nil
+		}
+	}
+
 	if !utilfeature.DefaultFeatureGate.Enabled(features.PodPriority) && !podPriorityInUse(oldPodSpec) {
 		// Set to nil pod's priority fields if the feature is disabled and the old pod
 		// does not specify any values for these fields.
 		podSpec.Priority = nil
 		podSpec.PriorityClassName = ""
+	}
+
+	if !utilfeature.DefaultFeatureGate.Enabled(features.PodReadinessGates) && !podReadinessGatesInUse(oldPodSpec) {
+		podSpec.ReadinessGates = nil
+	}
+
+	if !utilfeature.DefaultFeatureGate.Enabled(features.Sysctls) && !sysctlsInUse(oldPodSpec) {
+		if podSpec.SecurityContext != nil {
+			podSpec.SecurityContext.Sysctls = nil
+		}
 	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.LocalStorageCapacityIsolation) && !emptyDirSizeLimitInUse(oldPodSpec) {
@@ -454,12 +482,60 @@ func appArmorInUse(podAnnotations map[string]string) bool {
 	return false
 }
 
+func shareProcessNamespaceInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	if podSpec.SecurityContext != nil && podSpec.SecurityContext.ShareProcessNamespace != nil {
+		return true
+	}
+	return false
+}
+
+func tokenRequestProjectionInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	for _, v := range podSpec.Volumes {
+		if v.Projected == nil {
+			continue
+		}
+		for _, s := range v.Projected.Sources {
+			if s.ServiceAccountToken != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // podPriorityInUse returns true if the pod spec is non-nil and has Priority or PriorityClassName set.
 func podPriorityInUse(podSpec *api.PodSpec) bool {
 	if podSpec == nil {
 		return false
 	}
 	if podSpec.Priority != nil || podSpec.PriorityClassName != "" {
+		return true
+	}
+	return false
+}
+
+// podReadinessGatesInUse returns true if the pod spec is non-nil and has ReadinessGates
+func podReadinessGatesInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	if podSpec.ReadinessGates != nil {
+		return true
+	}
+	return false
+}
+
+func sysctlsInUse(podSpec *api.PodSpec) bool {
+	if podSpec == nil {
+		return false
+	}
+	if podSpec.SecurityContext != nil && podSpec.SecurityContext.Sysctls != nil {
 		return true
 	}
 	return false

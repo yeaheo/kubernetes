@@ -143,7 +143,7 @@ isnum() {
 
 PARALLEL="${PARALLEL:-1}"
 while getopts "hp:i:" opt ; do
-  case $opt in
+  case ${opt} in
     h)
       kube::test::usage
       exit 0
@@ -175,7 +175,6 @@ done
 shift $((OPTIND - 1))
 
 # Use eval to preserve embedded quoted strings.
-eval "goflags=(${GOFLAGS:-})"
 eval "testargs=(${KUBE_TEST_ARGS:-})"
 
 # Used to filter verbose test output.
@@ -317,12 +316,12 @@ runTests() {
   # vendor/k8s.io/client-go/1.4/rest: causes cover internal errors
   #                            https://github.com/golang/go/issues/16540
   cover_ignore_dirs="vendor/k8s.io/code-generator/cmd/generator|vendor/k8s.io/client-go/1.4/rest"
-  for path in $(echo $cover_ignore_dirs | sed 's/|/ /g'); do
+  for path in $(echo ${cover_ignore_dirs} | sed 's/|/ /g'); do
       echo -e "skipped\tk8s.io/kubernetes/$path"
   done
 
   printf "%s\n" "${@}" \
-    | grep -Ev $cover_ignore_dirs \
+    | grep -Ev ${cover_ignore_dirs} \
     | xargs -I{} -n 1 -P ${KUBE_COVERPROCS} \
     bash -c "set -o pipefail; _pkg=\"\$0\"; _pkg_out=\${_pkg//\//_}; \
       go test ${goflags[@]:+${goflags[@]}} \
@@ -350,7 +349,7 @@ runTests() {
     # Include all coverage reach data in the combined profile, but exclude the
     # 'mode' lines, as there should be only one.
     for x in `find "${cover_report_dir}" -name "${cover_profile}"`; do
-      cat $x | grep -h -v "^mode:" || true
+      cat ${x} | grep -h -v "^mode:" || true
     done
   } >"${COMBINED_COVER_PROFILE}"
 
@@ -375,8 +374,8 @@ checkFDs() {
   # several unittests panic when httptest cannot open more sockets
   # due to the low default files limit on OS X.  Warn about low limit.
   local fileslimit="$(ulimit -n)"
-  if [[ $fileslimit -lt 1000 ]]; then
-    echo "WARNING: ulimit -n (files) should be at least 1000, is $fileslimit, may cause test failure";
+  if [[ ${fileslimit} -lt 1000 ]]; then
+    echo "WARNING: ulimit -n (files) should be at least 1000, is ${fileslimit}, may cause test failure";
   fi
 }
 
@@ -388,7 +387,7 @@ IFS=';' read -a apiVersions <<< "${KUBE_TEST_API_VERSIONS}"
 apiVersionsCount=${#apiVersions[@]}
 for (( i=0; i<${apiVersionsCount}; i++ )); do
   apiVersion=${apiVersions[i]}
-  echo "Running tests for APIVersion: $apiVersion"
+  echo "Running tests for APIVersion: ${apiVersion}"
   # KUBE_TEST_API sets the version of each group to be tested.
   KUBE_TEST_API="${apiVersion}" runTests "$@"
 done

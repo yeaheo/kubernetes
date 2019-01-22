@@ -594,11 +594,11 @@ kube::golang::build_binaries_for_platform() {
 
   for binary in "${binaries[@]}"; do
     if [[ "${binary}" =~ ".test"$ ]]; then
-      tests+=($binary)
+      tests+=(${binary})
     elif kube::golang::is_statically_linked_library "${binary}"; then
-      statics+=($binary)
+      statics+=(${binary})
     else
-      nonstatics+=($binary)
+      nonstatics+=(${binary})
     fi
   done
 
@@ -685,9 +685,7 @@ kube::golang::build_binaries() {
     local host_platform
     host_platform=$(kube::golang::host_platform)
 
-    # Use eval to preserve embedded quoted strings.
     local goflags goldflags goasmflags gogcflags
-    eval "goflags=(${GOFLAGS:-})"
     goldflags="${GOLDFLAGS:-} -s -w $(kube::version::ldflags)"
     goasmflags="-trimpath=${KUBE_ROOT}"
     gogcflags="${GOGCFLAGS:-} -trimpath=${KUBE_ROOT}"
