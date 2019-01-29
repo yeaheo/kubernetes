@@ -522,13 +522,6 @@ function start_apiserver {
       priv_arg="--allow-privileged=${ALLOW_PRIVILEGED} "
     fi
 
-    if [[ ${ENABLE_ADMISSION_PLUGINS} == *"Initializers"* ]]; then
-        if [[ -n "${RUNTIME_CONFIG}" ]]; then
-          RUNTIME_CONFIG+=","
-        fi
-        RUNTIME_CONFIG+="admissionregistration.k8s.io/v1alpha1"
-    fi
-
     runtime_config=""
     if [[ -n "${RUNTIME_CONFIG}" ]]; then
       runtime_config="--runtime-config=${RUNTIME_CONFIG}"
@@ -965,9 +958,9 @@ create_csi_crd() {
     echo "create_csi_crd $1"
     YAML_FILE=${KUBE_ROOT}/cluster/addons/storage-crds/$1.yaml
 
-    if [ -e $YAML_FILE ]; then
+    if [ -e "${YAML_FILE}" ]; then
         echo "Create $1 crd"
-        ${KUBECTL} --kubeconfig="${CERT_DIR}/admin.kubeconfig" create -f $YAML_FILE
+        ${KUBECTL} --kubeconfig="${CERT_DIR}/admin.kubeconfig" create -f ${YAML_FILE}
     else
         echo "No $1 available."
     fi
@@ -1038,7 +1031,7 @@ if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
   export PATH="${KUBE_ROOT}/third_party/etcd:${PATH}"
   KUBE_FASTBUILD=true make ginkgo cross
 
-  apt install -y sudo
+  apt-get update && apt-get install -y sudo
   apt-get remove -y systemd
 
   # configure shared mounts to prevent failure in DIND scenarios

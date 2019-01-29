@@ -24,8 +24,8 @@ import (
 	"path/filepath"
 	"text/template"
 
+	"github.com/lithammer/dedent"
 	"github.com/pkg/errors"
-	"github.com/renstrom/dedent"
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -39,6 +39,7 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/validation"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/options"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/workflow"
+	cmdutil "k8s.io/kubernetes/cmd/kubeadm/app/cmd/util"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/discovery"
 	certsphase "k8s.io/kubernetes/cmd/kubeadm/app/phases/certs"
@@ -158,7 +159,6 @@ var (
 // Please note that this structure includes the public kubeadm config API, but only a subset of the options
 // supported by this api will be exposed as a flag.
 type joinOptions struct {
-	args                  *[]string
 	cfgPath               string
 	token                 string
 	controlPlane          bool
@@ -190,17 +190,16 @@ func NewCmdJoin(out io.Writer, joinOptions *joinOptions) *cobra.Command {
 		Short: "Run this on any machine you wish to join an existing cluster",
 		Long:  joinLongDescription,
 		Run: func(cmd *cobra.Command, args []string) {
-			joinOptions.args = &args
 
-			c, err := joinRunner.InitData()
+			c, err := joinRunner.InitData(args)
 			kubeadmutil.CheckErr(err)
 
-			err = joinRunner.Run()
+			err = joinRunner.Run(args)
 			kubeadmutil.CheckErr(err)
 
 			// TODO: remove this once we have all phases in place.
 			// the method joinData.Run() itself should be removed too.
-			data := c.(joinData)
+			data := c.(*joinData)
 			err = data.Run()
 			kubeadmutil.CheckErr(err)
 		},
@@ -215,8 +214,8 @@ func NewCmdJoin(out io.Writer, joinOptions *joinOptions) *cobra.Command {
 
 	// sets the data builder function, that will be used by the runner
 	// both when running the entire workflow or single phases
-	joinRunner.SetDataInitializer(func(cmd *cobra.Command) (workflow.RunData, error) {
-		return newJoinData(cmd, joinOptions, out)
+	joinRunner.SetDataInitializer(func(cmd *cobra.Command, args []string) (workflow.RunData, error) {
+		return newJoinData(cmd, args, joinOptions, out)
 	})
 
 	// binds the Runner to kubeadm join command by altering
@@ -233,16 +232,13 @@ func AddJoinConfigFlags(flagSet *flag.FlagSet, cfg *kubeadmapiv1beta1.JoinConfig
 		`Specify the node name.`,
 	)
 	flagSet.StringVar(
-		&cfg.NodeRegistration.CRISocket, options.NodeCRISocket, cfg.NodeRegistration.CRISocket,
-		`Specify the CRI socket to connect to.`,
-	)
-	flagSet.StringVar(
 		&cfg.Discovery.TLSBootstrapToken, options.TLSBootstrapToken, cfg.Discovery.TLSBootstrapToken,
 		`Specify the token used to temporarily authenticate with the Kubernetes Master while joining the node.`,
 	)
 	AddControlPlaneFlags(flagSet, cfg.ControlPlane)
 	AddJoinBootstrapTokenDiscoveryFlags(flagSet, cfg.Discovery.BootstrapToken)
 	AddJoinFileDiscoveryFlags(flagSet, cfg.Discovery.File)
+	cmdutil.AddCRISocketFlag(flagSet, &cfg.NodeRegistration.CRISocket)
 }
 
 // AddJoinBootstrapTokenDiscoveryFlags adds bootstrap token specific discovery flags to the specified flagset
@@ -323,7 +319,7 @@ func newJoinOptions() *joinOptions {
 // newJoinData returns a new joinData struct to be used for the execution of the kubeadm join workflow.
 // This func takes care of validating joinOptions passed to the command, and then it converts
 // options into the internal JoinConfiguration type that is used as input all the phases in the kubeadm join workflow
-func newJoinData(cmd *cobra.Command, options *joinOptions, out io.Writer) (joinData, error) {
+func newJoinData(cmd *cobra.Command, args []string, options *joinOptions, out io.Writer) (*joinData, error) {
 	// Re-apply defaults to the public kubeadm API (this will set only values not exposed/not set as a flags)
 	kubeadmscheme.Scheme.Default(options.externalcfg)
 
@@ -346,13 +342,13 @@ func newJoinData(cmd *cobra.Command, options *joinOptions, out io.Writer) (joinD
 	}
 
 	// if an APIServerEndpoint from which to retrive cluster information was not provided, unset the Discovery.BootstrapToken object
-	if len(*options.args) == 0 {
+	if len(args) == 0 {
 		options.externalcfg.Discovery.BootstrapToken = nil
 	} else {
-		if len(options.cfgPath) == 0 && len(*options.args) > 1 {
-			klog.Warningf("[join] WARNING: More than one API server endpoint supplied on command line %v. Using the first one.", *options.args)
+		if len(options.cfgPath) == 0 && len(args) > 1 {
+			klog.Warningf("[join] WARNING: More than one API server endpoint supplied on command line %v. Using the first one.", args)
 		}
-		options.externalcfg.Discovery.BootstrapToken.APIServerEndpoint = (*options.args)[0]
+		options.externalcfg.Discovery.BootstrapToken.APIServerEndpoint = args[0]
 	}
 
 	// if not joining a control plane, unset the ControlPlane object
@@ -362,11 +358,11 @@ func newJoinData(cmd *cobra.Command, options *joinOptions, out io.Writer) (joinD
 
 	ignorePreflightErrorsSet, err := validation.ValidateIgnorePreflightErrors(options.ignorePreflightErrors)
 	if err != nil {
-		return joinData{}, err
+		return &joinData{}, err
 	}
 
 	if err = validation.ValidateMixedArguments(cmd.Flags()); err != nil {
-		return joinData{}, err
+		return &joinData{}, err
 	}
 
 	// Either use the config file if specified, or convert public kubeadm API to the internal JoinConfiguration
@@ -381,24 +377,24 @@ func newJoinData(cmd *cobra.Command, options *joinOptions, out io.Writer) (joinD
 
 	cfg, err := configutil.JoinConfigFileAndDefaultsToInternalConfig(options.cfgPath, options.externalcfg)
 	if err != nil {
-		return joinData{}, err
+		return &joinData{}, err
 	}
 
 	// override node name and CRI socket from the command line options
 	if options.externalcfg.NodeRegistration.Name != "" {
 		cfg.NodeRegistration.Name = options.externalcfg.NodeRegistration.Name
 	}
-	if options.externalcfg.NodeRegistration.CRISocket != kubeadmapiv1beta1.DefaultCRISocket {
+	if options.externalcfg.NodeRegistration.CRISocket != "" {
 		cfg.NodeRegistration.CRISocket = options.externalcfg.NodeRegistration.CRISocket
 	}
 
 	if cfg.ControlPlane != nil {
 		if err := configutil.VerifyAPIServerBindAddress(cfg.ControlPlane.LocalAPIEndpoint.AdvertiseAddress); err != nil {
-			return joinData{}, err
+			return &joinData{}, err
 		}
 	}
 
-	return joinData{
+	return &joinData{
 		cfg:                   cfg,
 		ignorePreflightErrors: ignorePreflightErrorsSet,
 		outputWriter:          out,
