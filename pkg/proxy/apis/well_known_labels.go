@@ -1,5 +1,5 @@
 /*
-Copyright 2015 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,27 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package strings
+package apis
 
-import (
-	"fmt"
-	"os"
+const (
+	// LabelServiceProxyName indicates that an alternative service
+	// proxy will implement this Service.
+	LabelServiceProxyName = "service.kubernetes.io/service-proxy-name"
 )
-
-func Example_trailingNewline() {
-	ld := NewLineDelimiter(os.Stdout, "|")
-	defer ld.Flush()
-	fmt.Fprint(ld, "  Hello  \n  World  \n")
-	// Output:
-	// |  Hello  |
-	// |  World  |
-	// ||
-}
-func Example_noTrailingNewline() {
-	ld := NewLineDelimiter(os.Stdout, "|")
-	defer ld.Flush()
-	fmt.Fprint(ld, "  Hello  \n  World  ")
-	// Output:
-	// |  Hello  |
-	// |  World  |
-}

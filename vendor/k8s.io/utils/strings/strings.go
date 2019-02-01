@@ -19,10 +19,9 @@ package strings
 import (
 	"path"
 	"strings"
-	"unicode"
 )
 
-// SplitQualifiedName splits a fully qualified name and returns its namespace and name.
+// SplitQualifiedName Splits a fully qualified name and returns its namespace and name.
 // Assumes that the input 'str' has been validated.
 func SplitQualifiedName(str string) (string, string) {
 	parts := strings.Split(str, "/")
@@ -44,15 +43,4 @@ func ShortenString(str string, n int) string {
 		return str
 	}
 	return str[:n]
-}
-
-// isVowel returns true if the rune is a vowel (case insensitive).
-func isVowel(c rune) bool {
-	vowels := []rune{'a', 'e', 'i', 'o', 'u'}
-	for _, value := range vowels {
-		if value == unicode.ToLower(c) {
-			return true
-		}
-	}
-	return false
 }
