@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "go_default_library",
     srcs = [
+        "csi_mock_volume.go",
         "csi_volumes.go",
         "detach_mounted.go",
         "empty_dir_wrapper.go",
@@ -67,11 +68,9 @@ go_library(
         "//staging/src/k8s.io/csi-api/pkg/client/clientset/versioned:go_default_library",
         "//test/e2e/framework:go_default_library",
         "//test/e2e/framework/metrics:go_default_library",
-        "//test/e2e/framework/podlogs:go_default_library",
         "//test/e2e/framework/providers/gce:go_default_library",
         "//test/e2e/framework/testfiles:go_default_library",
         "//test/e2e/storage/drivers:go_default_library",
-        "//test/e2e/storage/testpatterns:go_default_library",
         "//test/e2e/storage/testsuites:go_default_library",
         "//test/e2e/storage/utils:go_default_library",
         "//test/utils/image:go_default_library",

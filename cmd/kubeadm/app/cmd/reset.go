@@ -31,11 +31,13 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
+	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/validation"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/options"
 	cmdutil "k8s.io/kubernetes/cmd/kubeadm/app/cmd/util"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	etcdphase "k8s.io/kubernetes/cmd/kubeadm/app/phases/etcd"
 	"k8s.io/kubernetes/cmd/kubeadm/app/preflight"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 	configutil "k8s.io/kubernetes/cmd/kubeadm/app/util/config"
@@ -62,18 +64,25 @@ func NewCmdReset(in io.Reader, out io.Writer) *cobra.Command {
 			kubeadmutil.CheckErr(err)
 
 			kubeConfigFile = cmdutil.FindExistingKubeConfig(kubeConfigFile)
-			client, err = getClientset(kubeConfigFile, false)
-			kubeadmutil.CheckErr(err)
+			if _, err := os.Stat(kubeConfigFile); !os.IsNotExist(err) {
+				client, err = getClientset(kubeConfigFile, false)
+				kubeadmutil.CheckErr(err)
+			}
+
+			cfg, err := configutil.FetchInitConfigurationFromCluster(client, os.Stdout, "reset", false)
+			if err != nil {
+				klog.Warningf("[reset] Unable to fetch the kubeadm-config ConfigMap from cluster: %v", err)
+			}
 
 			if criSocketPath == "" {
-				criSocketPath, err = resetDetectCRISocket(client)
+				criSocketPath, err = resetDetectCRISocket(cfg)
 				kubeadmutil.CheckErr(err)
 				klog.V(1).Infof("[reset] detected and using CRI socket: %s", criSocketPath)
 			}
 
 			r, err := NewReset(in, ignorePreflightErrorsSet, forceReset, certsDir, criSocketPath)
 			kubeadmutil.CheckErr(err)
-			kubeadmutil.CheckErr(r.Run(out, client))
+			kubeadmutil.CheckErr(r.Run(out, client, cfg))
 		},
 	}
 
@@ -128,15 +137,20 @@ func NewReset(in io.Reader, ignorePreflightErrors sets.String, forceReset bool, 
 }
 
 // Run reverts any changes made to this host by "kubeadm init" or "kubeadm join".
-func (r *Reset) Run(out io.Writer, client clientset.Interface) error {
+func (r *Reset) Run(out io.Writer, client clientset.Interface, cfg *kubeadmapi.InitConfiguration) error {
 	var dirsToClean []string
 	// Only clear etcd data when using local etcd.
 	etcdManifestPath := filepath.Join(kubeadmconstants.KubernetesDir, kubeadmconstants.ManifestsSubDirName, "etcd.yaml")
 
 	klog.V(1).Infof("[reset] checking for etcd config")
-	etcdDataDir, err := getEtcdDataDir(etcdManifestPath, client)
+	etcdDataDir, err := getEtcdDataDir(etcdManifestPath, cfg)
 	if err == nil {
 		dirsToClean = append(dirsToClean, etcdDataDir)
+		if cfg != nil {
+			if err := etcdphase.RemoveStackedEtcdMemberFromCluster(client, cfg); err != nil {
+				klog.Warningf("[reset] failed to remove etcd member: %v\n.Please manually remove this etcd member using etcdctl", err)
+			}
+		}
 	} else {
 		fmt.Println("[reset] no etcd config found. Assuming external etcd")
 		fmt.Println("[reset] please manually reset etcd to prevent further issues")
@@ -203,17 +217,14 @@ func (r *Reset) Run(out io.Writer, client clientset.Interface) error {
 	return nil
 }
 
-func getEtcdDataDir(manifestPath string, client clientset.Interface) (string, error) {
+func getEtcdDataDir(manifestPath string, cfg *kubeadmapi.InitConfiguration) (string, error) {
 	const etcdVolumeName = "etcd-data"
 	var dataDir string
 
-	if client != nil {
-		cfg, err := configutil.FetchInitConfigurationFromCluster(client, os.Stdout, "reset", false)
-		if err == nil && cfg.Etcd.Local != nil {
-			return cfg.Etcd.Local.DataDir, nil
-		}
-		klog.Warningf("[reset] Unable to fetch the kubeadm-config ConfigMap, using etcd pod spec as fallback: %v", err)
+	if cfg != nil && cfg.Etcd.Local != nil {
+		return cfg.Etcd.Local.DataDir, nil
 	}
+	klog.Warningln("[reset] No kubeadm config, using etcd pod spec to get data directory")
 
 	etcdPod, err := utilstaticpod.ReadStaticPodFromDisk(manifestPath)
 	if err != nil {
@@ -297,10 +308,9 @@ func resetConfigDir(configPathDir, pkiPathDir string) {
 	}
 }
 
-func resetDetectCRISocket(client clientset.Interface) (string, error) {
-	// first try to connect to the cluster for the CRI socket
-	cfg, err := configutil.FetchInitConfigurationFromCluster(client, os.Stdout, "reset", false)
-	if err == nil {
+func resetDetectCRISocket(cfg *kubeadmapi.InitConfiguration) (string, error) {
+	if cfg != nil {
+		// first try to get the CRI socket from the cluster configuration
 		return cfg.NodeRegistration.CRISocket, nil
 	}
 

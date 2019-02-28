@@ -36,6 +36,7 @@ import (
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume/util/recyclerclient"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
 )
 
 type ProbeOperation uint32
@@ -367,6 +368,9 @@ type VolumeHost interface {
 
 	// Returns the event recorder of kubelet.
 	GetEventRecorder() record.EventRecorder
+
+	// Returns an interface that should be used to execute subpath operations
+	GetSubpather() subpath.Interface
 }
 
 // VolumePluginMgr tracks registered plugins.
@@ -872,10 +876,10 @@ func (pm *VolumePluginMgr) FindExpandablePluginBySpec(spec *Spec) (ExpandableVol
 		if spec.IsKubeletExpandable() {
 			// for kubelet expandable volumes, return a noop plugin that
 			// returns success for expand on the controller
-			klog.Warningf("FindExpandablePluginBySpec(%s) -> returning noopExpandableVolumePluginInstance", spec.Name())
+			klog.V(4).Infof("FindExpandablePluginBySpec(%s) -> returning noopExpandableVolumePluginInstance", spec.Name())
 			return &noopExpandableVolumePluginInstance{spec}, nil
 		}
-		klog.Warningf("FindExpandablePluginBySpec(%s) -> err:%v", spec.Name(), err)
+		klog.V(4).Infof("FindExpandablePluginBySpec(%s) -> err:%v", spec.Name(), err)
 		return nil, err
 	}
 

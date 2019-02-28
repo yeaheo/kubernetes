@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -101,7 +101,7 @@ const (
 	// TokenDescription flag sets the description of the token
 	TokenDescription = "description"
 
-	// TLSBootstrapToken flag sets the token used to temporarily authenticate with the Kubernetes Master to submit a certificate signing request (CSR) for a locally created key pair
+	// TLSBootstrapToken flag sets the token used to temporarily authenticate with the Kubernetes Control Plane to submit a certificate signing request (CSR) for a locally created key pair
 	TLSBootstrapToken = "tls-bootstrap-token"
 
 	// TokenDiscovery flag sets the token used to validate cluster information fetched from the API server (for token-based discovery)
@@ -118,4 +118,10 @@ const (
 
 	// ControlPlane flag instruct kubeadm to create a new control plane instance on this node
 	ControlPlane = "experimental-control-plane"
+
+	// UploadCerts flag instruct kubeadm to upload certificates
+	UploadCerts = "experimental-upload-certs"
+
+	// CertificateKey flag sets the key used to encrypt and decrypt certificate secrets
+	CertificateKey = "certificate-key"
 )

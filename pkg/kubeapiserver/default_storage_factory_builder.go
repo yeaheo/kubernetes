@@ -34,7 +34,6 @@ import (
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/apis/networking"
 	"k8s.io/kubernetes/pkg/apis/policy"
-	apisstorage "k8s.io/kubernetes/pkg/apis/storage"
 )
 
 // SpecialDefaultResourcePrefixes are prefixes compiled into Kubernetes.
@@ -54,7 +53,6 @@ func NewStorageFactoryConfig() *StorageFactoryConfig {
 		DefaultResourceEncoding: serverstorage.NewDefaultResourceEncodingConfig(legacyscheme.Scheme),
 		ResourceEncodingOverrides: []schema.GroupVersionResource{
 			batch.Resource("cronjobs").WithVersion("v1beta1"),
-			apisstorage.Resource("volumeattachments").WithVersion("v1beta1"),
 		},
 	}
 }
@@ -98,6 +96,7 @@ func (c *completedStorageFactoryConfig) New() (*serverstorage.DefaultStorageFact
 	storageFactory.AddCohabitatingResources(apps.Resource("replicasets"), extensions.Resource("replicasets"))
 	storageFactory.AddCohabitatingResources(api.Resource("events"), events.Resource("events"))
 	storageFactory.AddCohabitatingResources(policy.Resource("podsecuritypolicies"), extensions.Resource("podsecuritypolicies"))
+	storageFactory.AddCohabitatingResources(extensions.Resource("ingresses"), networking.Resource("ingresses"))
 
 	for _, override := range c.EtcdServersOverrides {
 		tokens := strings.Split(override, "#")

@@ -113,6 +113,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/csi"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	nodeapiclientset "k8s.io/node-api/pkg/client/clientset/versioned"
 	utilexec "k8s.io/utils/exec"
 	"k8s.io/utils/integer"
@@ -255,6 +256,7 @@ type Dependencies struct {
 	OSInterface             kubecontainer.OSInterface
 	PodConfig               *config.PodConfig
 	Recorder                record.EventRecorder
+	Subpather               subpath.Interface
 	VolumePlugins           []volume.VolumePlugin
 	DynamicPluginProber     volume.DynamicPluginProber
 	TLSOptions              *server.TLSOptions
@@ -519,6 +521,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		cgroupsPerQOS:                           kubeCfg.CgroupsPerQOS,
 		cgroupRoot:                              kubeCfg.CgroupRoot,
 		mounter:                                 kubeDeps.Mounter,
+		subpather:                               kubeDeps.Subpather,
 		maxPods:                                 int(kubeCfg.MaxPods),
 		podsPerCore:                             int(kubeCfg.PodsPerCore),
 		syncLoopMonitor:                         atomic.Value{},
@@ -1099,6 +1102,9 @@ type Kubelet struct {
 	// Mounter to use for volumes.
 	mounter mount.Interface
 
+	// subpather to execute subpath actions
+	subpather subpath.Interface
+
 	// Manager of non-Runtime containers.
 	containerManager cm.ContainerManager
 
@@ -1500,7 +1506,8 @@ func (kl *Kubelet) syncPod(o syncPodOptions) error {
 		if !firstSeenTime.IsZero() {
 			// This is the first time we are syncing the pod. Record the latency
 			// since kubelet first saw the pod if firstSeenTime is set.
-			metrics.PodWorkerStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
+			metrics.PodWorkerStartDuration.Observe(metrics.SinceInSeconds(firstSeenTime))
+			metrics.DeprecatedPodWorkerStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
 		} else {
 			klog.V(3).Infof("First seen time not recorded for pod %q", pod.UID)
 		}
@@ -1517,7 +1524,8 @@ func (kl *Kubelet) syncPod(o syncPodOptions) error {
 	existingStatus, ok := kl.statusManager.GetPodStatus(pod.UID)
 	if !ok || existingStatus.Phase == v1.PodPending && apiPodStatus.Phase == v1.PodRunning &&
 		!firstSeenTime.IsZero() {
-		metrics.PodStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
+		metrics.PodStartDuration.Observe(metrics.SinceInSeconds(firstSeenTime))
+		metrics.DeprecatedPodStartLatency.Observe(metrics.SinceInMicroseconds(firstSeenTime))
 	}
 
 	runnable := kl.canRunPod(pod)
@@ -1996,7 +2004,8 @@ func (kl *Kubelet) dispatchWork(pod *v1.Pod, syncType kubetypes.SyncPodType, mir
 		UpdateType: syncType,
 		OnCompleteFunc: func(err error) {
 			if err != nil {
-				metrics.PodWorkerLatency.WithLabelValues(syncType.String()).Observe(metrics.SinceInMicroseconds(start))
+				metrics.PodWorkerDuration.WithLabelValues(syncType.String()).Observe(metrics.SinceInSeconds(start))
+				metrics.DeprecatedPodWorkerLatency.WithLabelValues(syncType.String()).Observe(metrics.SinceInMicroseconds(start))
 			}
 		},
 	})
