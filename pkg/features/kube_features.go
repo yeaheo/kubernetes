@@ -87,6 +87,8 @@ const (
 
 	// owner: @msau42
 	// alpha: v1.7
+	// beta: v1.10
+	// ga: v1.14
 	//
 	// A new volume type that supports local disks on a node.
 	PersistentLocalVolumes utilfeature.Feature = "PersistentLocalVolumes"
@@ -133,13 +135,6 @@ const (
 	// Taint nodes based on their condition status for 'NetworkUnavailable',
 	// 'MemoryPressure', 'PIDPressure' and 'DiskPressure'.
 	TaintNodesByCondition utilfeature.Feature = "TaintNodesByCondition"
-
-	// owner: @jsafrane
-	// GA: v1.12
-	//
-	// Note: This feature gate is unconditionally enabled in v1.13 and will be removed in v1.14.
-	// Enable mount propagation of volumes.
-	MountPropagation utilfeature.Feature = "MountPropagation"
 
 	// owner: @sjenning
 	// alpha: v1.11
@@ -200,12 +195,14 @@ const (
 
 	// owner: @saad-ali
 	// alpha: v1.12
-	// Enable all logic related to the CSIDriver API object in csi.storage.k8s.io
+	// beta:  v1.14
+	// Enable all logic related to the CSIDriver API object in storage.k8s.io
 	CSIDriverRegistry utilfeature.Feature = "CSIDriverRegistry"
 
 	// owner: @verult
 	// alpha: v1.12
-	// Enable all logic related to the CSINodeInfo API object in csi.storage.k8s.io
+	// beta:  v1.14
+	// Enable all logic related to the CSINode API object in storage.k8s.io
 	CSINodeInfo utilfeature.Feature = "CSINodeInfo"
 
 	// owner @MrHohn
@@ -285,7 +282,7 @@ const (
 	CRIContainerLogRotation utilfeature.Feature = "CRIContainerLogRotation"
 
 	// owner: @krmayankk
-	// alpha: v1.10
+	// beta: v1.14
 	//
 	// Enables control over the primary group ID of containers' init processes.
 	RunAsGroup utilfeature.Feature = "RunAsGroup"
@@ -435,7 +432,7 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	TaintBasedEvictions:                         {Default: true, PreRelease: utilfeature.Beta},
 	RotateKubeletServerCertificate:              {Default: true, PreRelease: utilfeature.Beta},
 	RotateKubeletClientCertificate:              {Default: true, PreRelease: utilfeature.Beta},
-	PersistentLocalVolumes:                      {Default: true, PreRelease: utilfeature.Beta},
+	PersistentLocalVolumes:                      {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.17
 	LocalStorageCapacityIsolation:               {Default: true, PreRelease: utilfeature.Beta},
 	HugePages:                                   {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.16
 	Sysctls:                                     {Default: true, PreRelease: utilfeature.Beta},
@@ -443,7 +440,6 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	PodShareProcessNamespace:                    {Default: true, PreRelease: utilfeature.Beta},
 	PodPriority:                                 {Default: true, PreRelease: utilfeature.GA},
 	TaintNodesByCondition:                       {Default: true, PreRelease: utilfeature.Beta},
-	MountPropagation:                            {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.14
 	QOSReserved:                                 {Default: false, PreRelease: utilfeature.Alpha},
 	ExpandPersistentVolumes:                     {Default: true, PreRelease: utilfeature.Beta},
 	ExpandInUsePersistentVolumes:                {Default: false, PreRelease: utilfeature.Alpha},
@@ -453,9 +449,9 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	ServiceNodeExclusion:                        {Default: false, PreRelease: utilfeature.Alpha},
 	MountContainers:                             {Default: false, PreRelease: utilfeature.Alpha},
 	VolumeScheduling:                            {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.16
-	CSIPersistentVolume:                         {Default: true, PreRelease: utilfeature.GA},
-	CSIDriverRegistry:                           {Default: false, PreRelease: utilfeature.Alpha},
-	CSINodeInfo:                                 {Default: false, PreRelease: utilfeature.Alpha},
+	CSIPersistentVolume:                         {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.16
+	CSIDriverRegistry:                           {Default: true, PreRelease: utilfeature.Beta},
+	CSINodeInfo:                                 {Default: true, PreRelease: utilfeature.Beta},
 	CustomPodDNS:                                {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.16
 	BlockVolume:                                 {Default: true, PreRelease: utilfeature.Beta},
 	StorageObjectInUseProtection:                {Default: true, PreRelease: utilfeature.GA},
@@ -473,12 +469,12 @@ var defaultKubernetesFeatureGates = map[utilfeature.Feature]utilfeature.FeatureS
 	CSIMigration:                                {Default: false, PreRelease: utilfeature.Alpha},
 	CSIMigrationGCE:                             {Default: false, PreRelease: utilfeature.Alpha},
 	CSIMigrationAWS:                             {Default: false, PreRelease: utilfeature.Alpha},
-	RunAsGroup:                                  {Default: false, PreRelease: utilfeature.Alpha},
+	RunAsGroup:                                  {Default: true, PreRelease: utilfeature.Beta},
 	VolumeSubpath:                               {Default: true, PreRelease: utilfeature.GA},
 	BalanceAttachedNodeVolumes:                  {Default: false, PreRelease: utilfeature.Alpha},
 	PodReadinessGates:                           {Default: true, PreRelease: utilfeature.Beta},
 	VolumeSubpathEnvExpansion:                   {Default: false, PreRelease: utilfeature.Alpha},
-	KubeletPluginsWatcher:                       {Default: true, PreRelease: utilfeature.GA},
+	KubeletPluginsWatcher:                       {Default: true, PreRelease: utilfeature.GA, LockToDefault: true}, // remove in 1.16
 	ResourceQuotaScopeSelectors:                 {Default: true, PreRelease: utilfeature.Beta},
 	CSIBlockVolume:                              {Default: false, PreRelease: utilfeature.Alpha},
 	RuntimeClass:                                {Default: false, PreRelease: utilfeature.Alpha},
