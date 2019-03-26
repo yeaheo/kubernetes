@@ -105,6 +105,8 @@ const (
 	APIServer
 	// AppArmorLoader image
 	AppArmorLoader
+	// AuditProxy image
+	AuditProxy
 	// BusyBox image
 	BusyBox
 	// CheckMetadataConcealment image
@@ -196,6 +198,7 @@ func initImageConfigs() map[int]Config {
 	configs[AdmissionWebhook] = Config{e2eRegistry, "webhook", "1.14v1"}
 	configs[APIServer] = Config{e2eRegistry, "sample-apiserver", "1.10"}
 	configs[AppArmorLoader] = Config{e2eRegistry, "apparmor-loader", "1.0"}
+	configs[AuditProxy] = Config{e2eRegistry, "audit-proxy", "1.0"}
 	configs[BusyBox] = Config{dockerLibraryRegistry, "busybox", "1.29"}
 	configs[CheckMetadataConcealment] = Config{e2eRegistry, "metadata-concealment", "1.2"}
 	configs[CudaVectorAdd] = Config{e2eRegistry, "cuda-vector-add", "1.0"}
@@ -212,7 +215,7 @@ func initImageConfigs() map[int]Config {
 	configs[Iperf] = Config{e2eRegistry, "iperf", "1.0"}
 	configs[JessieDnsutils] = Config{e2eRegistry, "jessie-dnsutils", "1.0"}
 	configs[Kitten] = Config{e2eRegistry, "kitten", "1.0"}
-	configs[Liveness] = Config{e2eRegistry, "liveness", "1.0"}
+	configs[Liveness] = Config{e2eRegistry, "liveness", "1.1"}
 	configs[LogsGenerator] = Config{e2eRegistry, "logs-generator", "1.0"}
 	configs[Mounttest] = Config{e2eRegistry, "mounttest", "1.0"}
 	configs[MounttestUser] = Config{e2eRegistry, "mounttest-user", "1.0"}

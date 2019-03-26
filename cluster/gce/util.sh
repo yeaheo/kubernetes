@@ -600,6 +600,7 @@ function write-linux-node-env {
 
 function write-windows-node-env {
   construct-windows-kubelet-flags
+  construct-windows-kubeproxy-flags
   build-windows-kube-env "${KUBE_TEMP}/windows-node-kube-env.yaml"
   build-kubelet-config false "windows" "${KUBE_TEMP}/windows-node-kubelet-config.yaml"
 }
@@ -610,7 +611,8 @@ function build-linux-node-labels {
   if [[ "${KUBE_PROXY_DAEMONSET:-}" == "true" && "${master}" != "true" ]]; then
     # Add kube-proxy daemonset label to node to avoid situation during cluster
     # upgrade/downgrade when there are two instances of kube-proxy running on a node.
-    node_labels="beta.kubernetes.io/kube-proxy-ds-ready=true"
+    # TODO(liggitt): drop beta.kubernetes.io/kube-proxy-ds-ready in 1.16
+    node_labels="node.kubernetes.io/kube-proxy-ds-ready=true,beta.kubernetes.io/kube-proxy-ds-ready=true"
   fi
   if [[ -n "${NODE_LABELS:-}" ]]; then
     node_labels="${node_labels:+${node_labels},}${NODE_LABELS}"
@@ -870,6 +872,37 @@ function construct-windows-kubelet-flags {
   KUBELET_ARGS="${flags}"
 }
 
+function construct-windows-kubeproxy-flags {
+  local flags=""
+
+  # Use the same log level as the Kubelet during tests.
+  flags+=" ${KUBELET_TEST_LOG_LEVEL:-"--v=2"}"
+
+  # Windows uses kernelspace proxymode
+  flags+=" --proxy-mode=kernelspace"
+
+  # Configure kube-proxy to run as a windows service.
+  flags+=" --windows-service=true"
+
+  # TODO(mtaufen): Configure logging for kube-proxy running as a service.
+  # I haven't been able to figure out how to direct stdout/stderr into log
+  # files when configuring it to run via sc.exe, so we just manually
+  # override logging config here.
+  flags+=" --log-file=${WINDOWS_LOGS_DIR}\kube-proxy.log"
+
+  # klog sets this to true internally, so need to override to false
+  # so we actually log to the file
+  flags+=" --logtostderr=false"
+
+  # Configure flags with explicit empty string values. We can't escape
+  # double-quotes, because they still break sc.exe after expansion in the
+  # binPath parameter, and single-quotes get parsed as characters instead
+  # of string delimiters.
+  flags+=" --resource-container="
+
+  KUBEPROXY_ARGS="${flags}"
+}
+
 # $1: if 'true', we're rendering config for a master, else a node
 function build-kubelet-config {
   local master="$1"
@@ -1110,6 +1143,7 @@ MULTIZONE: $(yaml-quote ${MULTIZONE:-})
 NON_MASQUERADE_CIDR: $(yaml-quote ${NON_MASQUERADE_CIDR:-})
 ENABLE_DEFAULT_STORAGE_CLASS: $(yaml-quote ${ENABLE_DEFAULT_STORAGE_CLASS:-})
 ENABLE_APISERVER_ADVANCED_AUDIT: $(yaml-quote ${ENABLE_APISERVER_ADVANCED_AUDIT:-})
+ENABLE_APISERVER_DYNAMIC_AUDIT: $(yaml-quote ${ENABLE_APISERVER_DYNAMIC_AUDIT:-})
 ENABLE_CACHE_MUTATION_DETECTOR: $(yaml-quote ${ENABLE_CACHE_MUTATION_DETECTOR:-false})
 ENABLE_PATCH_CONVERSION_DETECTOR: $(yaml-quote ${ENABLE_PATCH_CONVERSION_DETECTOR:-false})
 ADVANCED_AUDIT_POLICY: $(yaml-quote ${ADVANCED_AUDIT_POLICY:-})
@@ -1131,6 +1165,8 @@ ADVANCED_AUDIT_WEBHOOK_THROTTLE_BURST: $(yaml-quote ${ADVANCED_AUDIT_WEBHOOK_THR
 ADVANCED_AUDIT_WEBHOOK_INITIAL_BACKOFF: $(yaml-quote ${ADVANCED_AUDIT_WEBHOOK_INITIAL_BACKOFF:-})
 GCE_API_ENDPOINT: $(yaml-quote ${GCE_API_ENDPOINT:-})
 GCE_GLBC_IMAGE: $(yaml-quote ${GCE_GLBC_IMAGE:-})
+CUSTOM_INGRESS_YAML: |
+$(echo "${CUSTOM_INGRESS_YAML:-}" | sed -e "s/'/''/g")
 ENABLE_NODE_JOURNAL: $(yaml-quote ${ENABLE_NODE_JOURNAL:-false})
 PROMETHEUS_TO_SD_ENDPOINT: $(yaml-quote ${PROMETHEUS_TO_SD_ENDPOINT:-})
 PROMETHEUS_TO_SD_PREFIX: $(yaml-quote ${PROMETHEUS_TO_SD_PREFIX:-})
@@ -1436,6 +1472,7 @@ CNI_CONFIG_DIR: $(yaml-quote ${WINDOWS_CNI_CONFIG_DIR})
 MANIFESTS_DIR: $(yaml-quote ${WINDOWS_MANIFESTS_DIR})
 PKI_DIR: $(yaml-quote ${WINDOWS_PKI_DIR})
 KUBELET_CONFIG_FILE: $(yaml-quote ${WINDOWS_KUBELET_CONFIG_FILE})
+KUBEPROXY_ARGS: $(yaml-quote ${KUBEPROXY_ARGS})
 KUBECONFIG_FILE: $(yaml-quote ${WINDOWS_KUBECONFIG_FILE})
 BOOTSTRAP_KUBECONFIG_FILE: $(yaml-quote ${WINDOWS_BOOTSTRAP_KUBECONFIG_FILE})
 KUBEPROXY_KUBECONFIG_FILE: $(yaml-quote ${WINDOWS_KUBEPROXY_KUBECONFIG_FILE})

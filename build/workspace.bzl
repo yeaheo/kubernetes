@@ -14,16 +14,16 @@
 
 load("//build:platforms.bzl", "SERVER_PLATFORMS")
 load("//build:workspace_mirror.bzl", "mirror")
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
 load("@io_bazel_rules_docker//container:container.bzl", "container_pull")
 
-CNI_VERSION = "0.6.0"
+CNI_VERSION = "0.7.5"
 _CNI_TARBALL_ARCH_SHA256 = {
-    "amd64": "f04339a21b8edf76d415e7f17b620e63b8f37a76b2f706671587ab6464411f2d",
-    "arm": "ffb62021d2fc6e1266dc6ef7f2058125b6e6b44c016291a2b04a15ed9b4be70a",
-    "arm64": "016bbc989877e35e3cd49fafe11415fb2717e52c74fde6b1650411154cb91b81",
-    "ppc64le": "dd38dec69b167cfe40ecbba4b18cfe5b4296f2e49b90c00804b3988ef968e859",
-    "s390x": "7708289eee7e52ad055407c421033d8e593f5cf1a0b43a872f09eb4e1508aafc",
+    "amd64": "3ca15c0a18ee830520cf3a95408be826cbd255a1535a38e0be9608b25ad8bf64",
+    "arm": "0eb4a528b5b2e4ce23ebc96e41b2f5280d5a64d41eec8dd8b16c3d66aaa0f6b8",
+    "arm64": "7fec91af78e9548df306f0ec43bea527c8c10cc3a9682c33e971c8522a7fcded",
+    "ppc64le": "9164a26ed8dd398b2fe3b15d9d456271dfa59aa537528d10572ea9fa2cef7679",
+    "s390x": "415cdcf02c65c22f5b7e55b0ab61208a10f2b95a0c8310176c771d07a9f448cf",
 }
 
 CRI_TOOLS_VERSION = "1.12.0"
@@ -33,6 +33,13 @@ _CRI_TARBALL_ARCH_SHA256 = {
     "arm64": "8466f08b59bf36d2eebcb9428c3d4e6e224c3065d800ead09ad730ce374da6fe",
     "ppc64le": "ec6254f1f6ffa064ba41825aab5612b7b005c8171fbcdac2ca3927d4e393000f",
     "s390x": "814aa9cd496be416612c2653097a1c9eb5784e38aa4889034b44ebf888709057",
+}
+
+ETCD_VERSION = "3.3.10"
+_ETCD_TARBALL_ARCH_SHA256 = {
+    "amd64": "1620a59150ec0a0124a65540e23891243feb2d9a628092fb1edcc23974724a45",
+    "arm64": "5ec97b0b872adce275b8130d19db314f7f2b803aeb24c4aae17a19e2d66853c4",
+    "ppc64le": "148fe96f0ec1813c5db9916199e96a913174304546bc8447a2d2f9fee4b8f6c2",
 }
 
 # Note that these are digests for the manifest list. We resolve the manifest
@@ -48,6 +55,7 @@ def release_dependencies():
     cni_tarballs()
     cri_tarballs()
     debian_image_dependencies()
+    etcd_tarballs()
 
 def cni_tarballs():
     for arch, sha in _CNI_TARBALL_ARCH_SHA256.items():
@@ -91,4 +99,14 @@ def debian_image_dependencies():
             digest = _DEBIAN_HYPERKUBE_BASE_DIGEST,
             registry = "k8s.gcr.io",
             repository = "debian-hyperkube-base",
+        )
+
+def etcd_tarballs():
+    for arch, sha in _ETCD_TARBALL_ARCH_SHA256.items():
+        http_archive(
+            name = "com_coreos_etcd_%s" % arch,
+            build_file = "@//third_party:etcd.BUILD",
+            sha256 = sha,
+            strip_prefix = "etcd-v%s-linux-%s" % (ETCD_VERSION, arch),
+            urls = mirror("https://github.com/coreos/etcd/releases/download/v%s/etcd-v%s-linux-%s.tar.gz" % (ETCD_VERSION, ETCD_VERSION, arch)),
         )

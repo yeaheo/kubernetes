@@ -79,12 +79,14 @@ func (scope *RequestScope) err(err error, w http.ResponseWriter, req *http.Reque
 	responsewriters.ErrorNegotiated(err, scope.Serializer, scope.Kind.GroupVersion(), w, req)
 }
 
-func (scope *RequestScope) AllowsConversion(gvk schema.GroupVersionKind) bool {
+func (scope *RequestScope) AllowsConversion(gvk schema.GroupVersionKind, mimeType, mimeSubType string) bool {
 	// TODO: this is temporary, replace with an abstraction calculated at endpoint installation time
 	if gvk.GroupVersion() == metav1beta1.SchemeGroupVersion {
 		switch gvk.Kind {
 		case "Table":
-			return scope.TableConvertor != nil
+			return scope.TableConvertor != nil &&
+				mimeType == "application" &&
+				(mimeSubType == "json" || mimeSubType == "yaml")
 		case "PartialObjectMetadata", "PartialObjectMetadataList":
 			// TODO: should delineate between lists and non-list endpoints
 			return true
@@ -172,7 +174,7 @@ type responder struct {
 }
 
 func (r *responder) Object(statusCode int, obj runtime.Object) {
-	responsewriters.WriteObject(statusCode, r.scope.Kind.GroupVersion(), r.scope.Serializer, obj, r.w, r.req)
+	responsewriters.WriteObjectNegotiated(r.scope.Serializer, &r.scope, r.scope.Kind.GroupVersion(), r.w, r.req, statusCode, obj)
 }
 
 func (r *responder) Error(err error) {
@@ -290,7 +292,12 @@ func checkName(obj runtime.Object, name, namespace string, namer ScopeNamer) err
 }
 
 // setObjectSelfLink sets the self link of an object as needed.
+// TODO: remove the need for the namer LinkSetters by requiring objects implement either Object or List
+//   interfaces
 func setObjectSelfLink(ctx context.Context, obj runtime.Object, req *http.Request, namer ScopeNamer) error {
+	// We only generate list links on objects that implement ListInterface - historically we duck typed this
+	// check via reflection, but as we move away from reflection we require that you not only carry Items but
+	// ListMeta into order to be identified as a list.
 	if !meta.IsListType(obj) {
 		requestInfo, ok := request.RequestInfoFrom(ctx)
 		if !ok {
