@@ -810,6 +810,8 @@ func describeVolumes(volumes []corev1.Volume, w PrefixWriter, space string) {
 			printFlockerVolumeSource(volume.VolumeSource.Flocker, w)
 		case volume.VolumeSource.Projected != nil:
 			printProjectedVolumeSource(volume.VolumeSource.Projected, w)
+		case volume.VolumeSource.CSI != nil:
+			printCSIVolumeSource(volume.VolumeSource.CSI, w)
 		default:
 			w.Write(LEVEL_1, "<unknown>\n")
 		}
@@ -1209,6 +1211,23 @@ func printFlockerVolumeSource(flocker *corev1.FlockerVolumeSource, w PrefixWrite
 		flocker.DatasetName, flocker.DatasetUUID)
 }
 
+func printCSIVolumeSource(csi *corev1.CSIVolumeSource, w PrefixWriter) {
+	var readOnly bool
+	var fsType string
+	if csi.ReadOnly != nil && *csi.ReadOnly {
+		readOnly = true
+	}
+	if csi.FSType != nil {
+		fsType = *csi.FSType
+	}
+	w.Write(LEVEL_2, "Type:\tCSI (a Container Storage Interface (CSI) volume source)\n"+
+		"    Driver:\t%v\n"+
+		"    FSType:\t%v\n"+
+		"    ReadOnly:\t%v\n",
+		csi.Driver, fsType, readOnly)
+	printCSIPersistentVolumeAttributesMultiline(w, "VolumeAttributes", csi.VolumeAttributes)
+}
+
 func printCSIPersistentVolumeSource(csi *corev1.CSIPersistentVolumeSource, w PrefixWriter) {
 	w.Write(LEVEL_2, "Type:\tCSI (a Container Storage Interface (CSI) volume source)\n"+
 		"    Driver:\t%v\n"+
@@ -1492,6 +1511,8 @@ func describePersistentVolumeClaim(pvc *corev1.PersistentVolumeClaim, events *co
 		if pvc.Spec.VolumeMode != nil {
 			w.Write(LEVEL_0, "VolumeMode:\t%v\n", *pvc.Spec.VolumeMode)
 		}
+		printPodsMultiline(w, "Mounted By", mountPods)
+
 		if len(pvc.Status.Conditions) > 0 {
 			w.Write(LEVEL_0, "Conditions:\n")
 			w.Write(LEVEL_1, "Type\tStatus\tLastProbeTime\tLastTransitionTime\tReason\tMessage\n")
@@ -1509,8 +1530,6 @@ func describePersistentVolumeClaim(pvc *corev1.PersistentVolumeClaim, events *co
 		if events != nil {
 			DescribeEvents(events, w)
 		}
-
-		printPodsMultiline(w, "Mounted By", mountPods)
 
 		return nil
 	})

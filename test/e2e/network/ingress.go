@@ -55,14 +55,12 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 		ns               string
 		jig              *ingress.TestJig
 		conformanceTests []ingress.ConformanceTests
-		cloudConfig      framework.CloudConfig
 	)
 	f := framework.NewDefaultFramework("ingress")
 
 	BeforeEach(func() {
 		jig = ingress.NewIngressTestJig(f.ClientSet)
 		ns = f.Namespace.Name
-		cloudConfig = framework.TestContext.CloudConfig
 
 		// this test wants powerful permissions.  Since the namespace names are unique, we can leave this
 		// lying around so we don't have to race any caches
@@ -122,36 +120,6 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 				By(t.ExitLog)
 				jig.WaitForIngress(true)
 			}
-		})
-
-		It("should create ingress with given static-ip", func() {
-			// ip released when the rest of lb resources are deleted in CleanupIngressController
-			ip := gceController.CreateStaticIP(ns)
-			By(fmt.Sprintf("allocated static ip %v: %v through the GCE cloud provider", ns, ip))
-			executeStaticIPHttpsOnlyTest(f, jig, ns, ip)
-
-			By("should have correct firewall rule for ingress")
-			fw := gceController.GetFirewallRule()
-			nodeTags := []string{cloudConfig.NodeTag}
-			if framework.TestContext.Provider != "gce" {
-				// nodeTags would be different in GKE.
-				nodeTags = gce.GetNodeTags(jig.Client, cloudConfig)
-			}
-			expFw := jig.ConstructFirewallForIngress(gceController.GetFirewallRuleName(), nodeTags)
-			// Passed the last argument as `true` to verify the backend ports is a subset
-			// of the allowed ports in firewall rule, given there may be other existing
-			// ingress resources and backends we are not aware of.
-			Expect(gce.VerifyFirewallRule(fw, expFw, gceController.Cloud.Network, true)).NotTo(HaveOccurred())
-
-			// TODO: uncomment the restart test once we have a way to synchronize
-			// and know that the controller has resumed watching. If we delete
-			// the ingress before the controller is ready we will leak.
-			// By("restarting glbc")
-			// restarter := NewRestartConfig(
-			//	 framework.GetMasterHost(), "glbc", glbcHealthzPort, restartPollInterval, restartTimeout)
-			// restarter.restart()
-			// By("should continue serving on provided static-ip for 30 seconds")
-			// framework.ExpectNoError(jig.verifyURL(fmt.Sprintf("https://%v/", ip), "", 30, 1*time.Second, httpClient))
 		})
 
 		It("should update ingress while sync failures occur on other ingresses", func() {
@@ -316,10 +284,6 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 			executePresharedCertTest(f, jig, "")
 		})
 
-		It("should create ingress with backend HTTPS", func() {
-			executeBacksideBacksideHTTPSTest(f, jig, "")
-		})
-
 		It("should support multiple TLS certs", func() {
 			By("Creating an ingress with no certs.")
 			jig.CreateIngress(filepath.Join(ingress.IngressManifestPath, "multiple-certs"), ns, map[string]string{
@@ -426,41 +390,6 @@ var _ = SIGDescribe("Loadbalancing: L7", func() {
 
 			// TODO(nikhiljindal): Check the instance group annotation value and verify with a multizone cluster.
 		})
-
-		// TODO: remove [Unreleased] tag to once the new GCE API GO client gets revendored in ingress-gce repo
-		It("should be able to switch between HTTPS and HTTP2 modes [Unreleased]", func() {
-			httpsScheme := "request_scheme=https"
-
-			By("Create a basic HTTP2 ingress")
-			jig.CreateIngress(filepath.Join(ingress.IngressManifestPath, "http2"), ns, map[string]string{}, map[string]string{})
-			jig.WaitForIngress(true)
-
-			address, err := jig.WaitForIngressAddress(jig.Client, jig.Ingress.Namespace, jig.Ingress.Name, framework.LoadBalancerPollTimeout)
-
-			By(fmt.Sprintf("Polling on address %s and verify the backend is serving HTTP2", address))
-			detectHttpVersionAndSchemeTest(f, jig, address, "request_version=2", httpsScheme)
-
-			By("Switch backend service to use HTTPS")
-			svcList, err := f.ClientSet.CoreV1().Services(ns).List(metav1.ListOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			for _, svc := range svcList.Items {
-				svc.Annotations[ingress.ServiceApplicationProtocolKey] = `{"http2":"HTTPS"}`
-				_, err = f.ClientSet.CoreV1().Services(ns).Update(&svc)
-				Expect(err).NotTo(HaveOccurred())
-			}
-			detectHttpVersionAndSchemeTest(f, jig, address, "request_version=1.1", httpsScheme)
-
-			By("Switch backend service to use HTTP2")
-			svcList, err = f.ClientSet.CoreV1().Services(ns).List(metav1.ListOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			for _, svc := range svcList.Items {
-				svc.Annotations[ingress.ServiceApplicationProtocolKey] = `{"http2":"HTTP2"}`
-				_, err = f.ClientSet.CoreV1().Services(ns).Update(&svc)
-				Expect(err).NotTo(HaveOccurred())
-			}
-			detectHttpVersionAndSchemeTest(f, jig, address, "request_version=2", httpsScheme)
-		})
-
 		// TODO: Implement a multizone e2e that verifies traffic reaches each
 		// zone based on pod labels.
 	})
