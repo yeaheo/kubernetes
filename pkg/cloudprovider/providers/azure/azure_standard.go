@@ -568,16 +568,6 @@ func extractResourceGroupByNicID(nicID string) (string, error) {
 	return matches[1], nil
 }
 
-// extractResourceGroupByPipID extracts the resource group name by publicIP ID.
-func extractResourceGroupByPipID(pipID string) (string, error) {
-	matches := publicIPResourceGroupRE.FindStringSubmatch(pipID)
-	if len(matches) != 2 {
-		return "", fmt.Errorf("error of extracting resourceGroup from pipID %q", pipID)
-	}
-
-	return matches[1], nil
-}
-
 // getPrimaryInterfaceWithVMSet gets machine primary network interface by node name and vmSet.
 func (as *availabilitySet) getPrimaryInterfaceWithVMSet(nodeName, vmSetName string) (network.Interface, error) {
 	var machine compute.VirtualMachine
@@ -676,16 +666,19 @@ func (as *availabilitySet) ensureHostInPool(service *v1.Service, nodeName types.
 			// sets, the same network interface couldn't be added to more than one load balancer of
 			// the same type. Omit those nodes (e.g. masters) so Azure ARM won't complain
 			// about this.
+			newBackendPoolsIDs := make([]string, 0, len(newBackendPools))
 			for _, pool := range newBackendPools {
-				backendPool := *pool.ID
-				matches := backendPoolIDRE.FindStringSubmatch(backendPool)
-				if len(matches) == 2 {
-					lbName := matches[1]
-					if strings.HasSuffix(lbName, InternalLoadBalancerNameSuffix) == isInternal {
-						klog.V(4).Infof("Node %q has already been added to LB %q, omit adding it to a new one", nodeName, lbName)
-						return nil
-					}
+				if pool.ID != nil {
+					newBackendPoolsIDs = append(newBackendPoolsIDs, *pool.ID)
 				}
+			}
+			isSameLB, oldLBName, err := isBackendPoolOnSameLB(backendPoolID, newBackendPoolsIDs)
+			if err != nil {
+				return err
+			}
+			if !isSameLB {
+				klog.V(4).Infof("Node %q has already been added to LB %q, omit adding it to a new one", nodeName, oldLBName)
+				return nil
 			}
 		}
 

@@ -29,6 +29,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/fatih/camelcase"
 
@@ -44,7 +45,7 @@ import (
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	schedulingv1beta1 "k8s.io/api/scheduling/v1beta1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -190,7 +191,7 @@ func describerMap(clientConfig *rest.Config) (map[schema.GroupKind]describe.Desc
 		{Group: rbacv1.GroupName, Kind: "RoleBinding"}:                            &RoleBindingDescriber{c},
 		{Group: rbacv1.GroupName, Kind: "ClusterRoleBinding"}:                     &ClusterRoleBindingDescriber{c},
 		{Group: networkingv1.GroupName, Kind: "NetworkPolicy"}:                    &NetworkPolicyDescriber{c},
-		{Group: schedulingv1beta1.GroupName, Kind: "PriorityClass"}:               &PriorityClassDescriber{c},
+		{Group: schedulingv1.GroupName, Kind: "PriorityClass"}:                    &PriorityClassDescriber{c},
 	}
 
 	return m, nil
@@ -303,8 +304,15 @@ func printUnstructuredContent(w PrefixWriter, level int, content map[string]inte
 }
 
 func smartLabelFor(field string) string {
-	commonAcronyms := []string{"API", "URL", "UID", "OSB", "GUID"}
+	// skip creating smart label if field name contains
+	// special characters other than '-'
+	if strings.IndexFunc(field, func(r rune) bool {
+		return !unicode.IsLetter(r) && r != '-'
+	}) != -1 {
+		return field
+	}
 
+	commonAcronyms := []string{"API", "URL", "UID", "OSB", "GUID"}
 	parts := camelcase.Split(field)
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -726,6 +734,9 @@ func describePod(pod *corev1.Pod, events *corev1.EventList) (string, error) {
 			w.Write(LEVEL_0, "QoS Class:\t%s\n", pod.Status.QOSClass)
 		} else {
 			w.Write(LEVEL_0, "QoS Class:\t%s\n", qos.GetPodQOS(pod))
+		}
+		if len(pod.Spec.PriorityClassName) > 0 {
+			w.Write(LEVEL_0, "Priority Class Name:\t%s\n", pod.Spec.PriorityClassName)
 		}
 		printLabelsMultiline(w, "Node-Selectors", pod.Spec.NodeSelector)
 		printPodTolerationsMultiline(w, "Tolerations", pod.Spec.Tolerations)
@@ -1956,6 +1967,9 @@ func DescribePodTemplate(template *corev1.PodTemplateSpec, w PrefixWriter) {
 	}
 	describeContainers("Containers", template.Spec.Containers, nil, nil, w, "  ")
 	describeVolumes(template.Spec.Volumes, w, "  ")
+	if len(template.Spec.PriorityClassName) > 0 {
+		w.Write(LEVEL_1, "Priority Class Name:\t%s\n", template.Spec.PriorityClassName)
+	}
 }
 
 // ReplicaSetDescriber generates information about a ReplicaSet and the pods it has created.
@@ -3782,7 +3796,7 @@ type PriorityClassDescriber struct {
 }
 
 func (s *PriorityClassDescriber) Describe(namespace, name string, describerSettings describe.DescriberSettings) (string, error) {
-	pc, err := s.SchedulingV1beta1().PriorityClasses().Get(name, metav1.GetOptions{})
+	pc, err := s.SchedulingV1().PriorityClasses().Get(name, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -3795,7 +3809,7 @@ func (s *PriorityClassDescriber) Describe(namespace, name string, describerSetti
 	return describePriorityClass(pc, events)
 }
 
-func describePriorityClass(pc *schedulingv1beta1.PriorityClass, events *corev1.EventList) (string, error) {
+func describePriorityClass(pc *schedulingv1.PriorityClass, events *corev1.EventList) (string, error) {
 	return tabbedString(func(out io.Writer) error {
 		w := NewPrefixWriter(out)
 		w.Write(LEVEL_0, "Name:\t%s\n", pc.Name)
@@ -4383,16 +4397,6 @@ func shorten(s string, maxLength int) string {
 		return s[:maxLength] + "..."
 	}
 	return s
-}
-
-// translateTimestampUntil returns the elapsed time until timestamp in
-// human-readable approximation.
-func translateTimestampUntil(timestamp metav1.Time) string {
-	if timestamp.IsZero() {
-		return "<unknown>"
-	}
-
-	return duration.HumanDuration(time.Until(timestamp.Time))
 }
 
 // translateTimestampSince returns the elapsed time since timestamp in
