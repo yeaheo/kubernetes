@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io/ioutil"
+	"k8s.io/kubernetes/pkg/apis/networking"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,12 +44,12 @@ import (
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	etcdtesting "k8s.io/apiserver/pkg/storage/etcd/testing"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	restclient "k8s.io/client-go/rest"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/apis/batch"
@@ -85,6 +86,7 @@ func setUp(t *testing.T) (*etcdtesting.EtcdTestServer, Config, *assert.Assertion
 	resourceEncodingOverrides := []schema.GroupVersionResource{
 		batch.Resource("cronjobs").WithVersion("v1beta1"),
 		apisstorage.Resource("volumeattachments").WithVersion("v1beta1"),
+		networking.Resource("ingresses").WithVersion("v1beta1"),
 	}
 	resourceEncoding = resourceconfig.MergeResourceEncodingConfigs(resourceEncoding, resourceEncodingOverrides)
 	storageFactory := serverstorage.NewDefaultStorageFactory(*storageConfig, testapi.StorageMediaType(), legacyscheme.Codecs, resourceEncoding, DefaultAPIResourceConfigSource(), nil)
@@ -376,7 +378,7 @@ func TestAPIVersionOfDiscoveryEndpoints(t *testing.T) {
 
 // This test doesn't cover the apiregistration and apiextensions group, as they are installed by other apiservers.
 func TestStorageVersionHashes(t *testing.T) {
-	defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionHash, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionHash, true)()
 	master, etcdserver, _, _ := newMaster(t)
 	defer etcdserver.Terminate(t)
 
@@ -421,7 +423,7 @@ func TestStorageVersionHashes(t *testing.T) {
 }
 
 func TestStorageVersionHashEqualities(t *testing.T) {
-	defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionHash, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionHash, true)()
 	master, etcdserver, _, assert := newMaster(t)
 	defer etcdserver.Terminate(t)
 

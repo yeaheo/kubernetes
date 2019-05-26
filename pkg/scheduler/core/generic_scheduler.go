@@ -39,11 +39,11 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/priorities"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
+	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	internalqueue "k8s.io/kubernetes/pkg/scheduler/internal/queue"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
-	pluginsv1alpha1 "k8s.io/kubernetes/pkg/scheduler/plugins/v1alpha1"
 	"k8s.io/kubernetes/pkg/scheduler/util"
 	"k8s.io/kubernetes/pkg/scheduler/volumebinder"
 	utiltrace "k8s.io/utils/trace"
@@ -158,15 +158,16 @@ type genericScheduler struct {
 	priorityMetaProducer     priorities.PriorityMetadataProducer
 	predicateMetaProducer    predicates.PredicateMetadataProducer
 	prioritizers             []priorities.PriorityConfig
-	pluginSet                pluginsv1alpha1.PluginSet
+	framework                framework.Framework
 	extenders                []algorithm.SchedulerExtender
 	lastNodeIndex            uint64
 	alwaysCheckAllPredicates bool
-	nodeInfoSnapshot         internalcache.NodeInfoSnapshot
+	nodeInfoSnapshot         *internalcache.NodeInfoSnapshot
 	volumeBinder             *volumebinder.VolumeBinder
 	pvcLister                corelisters.PersistentVolumeClaimLister
 	pdbLister                algorithm.PDBLister
 	disablePreemption        bool
+	lastIndex                int
 	percentageOfNodesToScore int32
 }
 
@@ -174,7 +175,7 @@ type genericScheduler struct {
 // functions.
 func (g *genericScheduler) snapshot() error {
 	// Used for all fit and priority funcs.
-	return g.cache.UpdateNodeInfoSnapshot(&g.nodeInfoSnapshot)
+	return g.cache.UpdateNodeInfoSnapshot(g.nodeInfoSnapshot)
 }
 
 // Schedule tries to schedule the given pod to one of the nodes in the node list.
@@ -460,8 +461,8 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 	if len(g.predicates) == 0 {
 		filtered = nodes
 	} else {
-		allNodes := int32(g.cache.NodeTree().NumNodes())
-		numNodesToFind := g.numFeasibleNodesToFind(allNodes)
+		allNodes := g.cache.NodeTree().AllNodes()
+		numNodesToFind := g.numFeasibleNodesToFind(int32(len(allNodes)))
 
 		// Create filtered list with enough space to avoid growing it
 		// and allow assigning.
@@ -477,8 +478,12 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 		// We can use the same metadata producer for all nodes.
 		meta := g.predicateMetaProducer(pod, g.nodeInfoSnapshot.NodeInfoMap)
 
+		processedNodes := int32(0)
 		checkNode := func(i int) {
-			nodeName := g.cache.NodeTree().Next()
+			// We check the nodes starting from where we left off in the previous scheduling cycle,
+			// this is to make sure all nodes have the same chance of being examined across pods.
+			atomic.AddInt32(&processedNodes, 1)
+			nodeName := allNodes[(g.lastIndex+i)%len(allNodes)]
 			fits, failedPredicates, err := podFitsOnNode(
 				pod,
 				meta,
@@ -510,7 +515,8 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 
 		// Stops searching for more nodes once the configured number of feasible nodes
 		// are found.
-		workqueue.ParallelizeUntil(ctx, 16, int(allNodes), checkNode)
+		workqueue.ParallelizeUntil(ctx, 16, len(allNodes), checkNode)
+		g.lastIndex = (g.lastIndex + int(processedNodes)) % len(allNodes)
 
 		filtered = filtered[:filteredLen]
 		if len(errs) > 0 {
@@ -1206,7 +1212,7 @@ func NewGenericScheduler(
 	predicateMetaProducer predicates.PredicateMetadataProducer,
 	prioritizers []priorities.PriorityConfig,
 	priorityMetaProducer priorities.PriorityMetadataProducer,
-	pluginSet pluginsv1alpha1.PluginSet,
+	framework framework.Framework,
 	extenders []algorithm.SchedulerExtender,
 	volumeBinder *volumebinder.VolumeBinder,
 	pvcLister corelisters.PersistentVolumeClaimLister,
@@ -1222,9 +1228,9 @@ func NewGenericScheduler(
 		predicateMetaProducer:    predicateMetaProducer,
 		prioritizers:             prioritizers,
 		priorityMetaProducer:     priorityMetaProducer,
-		pluginSet:                pluginSet,
+		framework:                framework,
 		extenders:                extenders,
-		nodeInfoSnapshot:         internalcache.NewNodeInfoSnapshot(),
+		nodeInfoSnapshot:         framework.NodeInfoSnapshot(),
 		volumeBinder:             volumeBinder,
 		pvcLister:                pvcLister,
 		pdbLister:                pdbLister,

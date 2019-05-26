@@ -33,23 +33,29 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
+	cacheddiscovery "k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	clientv1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/scale"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/disruption"
 	"k8s.io/kubernetes/pkg/scheduler"
+	schedulerconfig "k8s.io/kubernetes/pkg/scheduler/apis/config"
+
 	// Register defaults in pkg/scheduler/algorithmprovider.
 	_ "k8s.io/kubernetes/pkg/scheduler/algorithmprovider"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
 	"k8s.io/kubernetes/pkg/scheduler/factory"
-	plugins "k8s.io/kubernetes/pkg/scheduler/plugins/v1alpha1"
+	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	taintutils "k8s.io/kubernetes/pkg/util/taints"
 	"k8s.io/kubernetes/test/integration/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -73,6 +79,9 @@ func createConfiguratorWithPodInformer(
 	clientSet clientset.Interface,
 	podInformer coreinformers.PodInformer,
 	informerFactory informers.SharedInformerFactory,
+	pluginRegistry schedulerframework.Registry,
+	plugins *schedulerconfig.Plugins,
+	pluginConfig []schedulerconfig.PluginConfig,
 	stopCh <-chan struct{},
 ) factory.Configurator {
 	return factory.NewConfigFactory(&factory.ConfigFactoryArgs{
@@ -88,6 +97,9 @@ func createConfiguratorWithPodInformer(
 		ServiceInformer:                informerFactory.Core().V1().Services(),
 		PdbInformer:                    informerFactory.Policy().V1beta1().PodDisruptionBudgets(),
 		StorageClassInformer:           informerFactory.Storage().V1().StorageClasses(),
+		Registry:                       pluginRegistry,
+		Plugins:                        plugins,
+		PluginConfig:                   pluginConfig,
 		HardPodAffinitySymmetricWeight: v1.DefaultHardPodAffinitySymmetricWeight,
 		DisablePreemption:              false,
 		PercentageOfNodesToScore:       schedulerapi.DefaultPercentageOfNodesToScore,
@@ -146,7 +158,8 @@ func initTestScheduler(
 ) *testContext {
 	// Pod preemption is enabled by default scheduler configuration, but preemption only happens when PodPriority
 	// feature gate is enabled at the same time.
-	return initTestSchedulerWithOptions(t, context, setPodInformer, policy, nil, false, time.Second)
+	return initTestSchedulerWithOptions(t, context, setPodInformer, policy, schedulerframework.NewRegistry(),
+		nil, []schedulerconfig.PluginConfig{}, false, time.Second)
 }
 
 // initTestSchedulerWithOptions initializes a test environment and creates a scheduler with default
@@ -156,7 +169,9 @@ func initTestSchedulerWithOptions(
 	context *testContext,
 	setPodInformer bool,
 	policy *schedulerapi.Policy,
-	pluginSet plugins.PluginSet,
+	pluginRegistry schedulerframework.Registry,
+	plugins *schedulerconfig.Plugins,
+	pluginConfig []schedulerconfig.PluginConfig,
 	disablePreemption bool,
 	resyncPeriod time.Duration,
 ) *testContext {
@@ -173,7 +188,8 @@ func initTestSchedulerWithOptions(
 	}
 
 	context.schedulerConfigFactory = createConfiguratorWithPodInformer(
-		v1.DefaultSchedulerName, context.clientSet, podInformer, context.informerFactory, context.stopCh)
+		v1.DefaultSchedulerName, context.clientSet, podInformer, context.informerFactory, pluginRegistry, plugins,
+		pluginConfig, context.stopCh)
 
 	var err error
 
@@ -208,11 +224,6 @@ func initTestSchedulerWithOptions(
 		controller.WaitForCacheSync("scheduler", context.schedulerConfig.StopEverything, podInformer.Informer().HasSynced)
 	}
 
-	// Set pluginSet if provided. DefaultPluginSet is used if this is not specified.
-	if pluginSet != nil {
-		context.schedulerConfig.PluginSet = pluginSet
-	}
-
 	eventBroadcaster := record.NewBroadcaster()
 	context.schedulerConfig.Recorder = eventBroadcaster.NewRecorder(
 		legacyscheme.Scheme,
@@ -231,8 +242,18 @@ func initTestSchedulerWithOptions(
 
 // initDisruptionController initializes and runs a Disruption Controller to properly
 // update PodDisuptionBudget objects.
-func initDisruptionController(context *testContext) *disruption.DisruptionController {
+func initDisruptionController(t *testing.T, context *testContext) *disruption.DisruptionController {
 	informers := informers.NewSharedInformerFactory(context.clientSet, 12*time.Hour)
+
+	discoveryClient := cacheddiscovery.NewMemCacheClient(context.clientSet.Discovery())
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
+
+	config := restclient.Config{Host: context.httpServer.URL}
+	scaleKindResolver := scale.NewDiscoveryScaleKindResolver(context.clientSet.Discovery())
+	scaleClient, err := scale.NewForConfig(&config, mapper, dynamic.LegacyAPIPathResolverFunc, scaleKindResolver)
+	if err != nil {
+		t.Fatalf("Error in create scaleClient: %v", err)
+	}
 
 	dc := disruption.NewDisruptionController(
 		informers.Core().V1().Pods(),
@@ -241,7 +262,9 @@ func initDisruptionController(context *testContext) *disruption.DisruptionContro
 		informers.Apps().V1().ReplicaSets(),
 		informers.Apps().V1().Deployments(),
 		informers.Apps().V1().StatefulSets(),
-		context.clientSet)
+		context.clientSet,
+		mapper,
+		scaleClient)
 
 	informers.Start(context.schedulerConfig.StopEverything)
 	informers.WaitForCacheSync(context.schedulerConfig.StopEverything)
@@ -259,7 +282,9 @@ func initTest(t *testing.T, nsPrefix string) *testContext {
 // configuration but with pod preemption disabled.
 func initTestDisablePreemption(t *testing.T, nsPrefix string) *testContext {
 	return initTestSchedulerWithOptions(
-		t, initTestMaster(t, nsPrefix, nil), true, nil, nil, true, time.Second)
+		t, initTestMaster(t, nsPrefix, nil), true, nil,
+		schedulerframework.NewRegistry(), nil, []schedulerconfig.PluginConfig{},
+		true, time.Second)
 }
 
 // cleanupTest deletes the scheduler and the test namespace. It should be called

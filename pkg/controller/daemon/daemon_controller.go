@@ -535,6 +535,15 @@ func (dsc *DaemonSetsController) updatePod(old, cur interface{}) {
 		return
 	}
 
+	if curPod.DeletionTimestamp != nil {
+		// when a pod is deleted gracefully its deletion timestamp is first modified to reflect a grace period,
+		// and after such time has passed, the kubelet actually deletes it from the store. We receive an update
+		// for modification of the deletion timestamp and expect an ds to create more replicas asap, not wait
+		// until the kubelet actually deletes the pod.
+		dsc.deletePod(curPod)
+		return
+	}
+
 	curControllerRef := metav1.GetControllerOf(curPod)
 	oldControllerRef := metav1.GetControllerOf(oldPod)
 	controllerRefChanged := !reflect.DeepEqual(curControllerRef, oldControllerRef)
@@ -1067,7 +1076,7 @@ func (dsc *DaemonSetsController) syncNodes(ds *apps.DaemonSet, podsToDelete, nod
 		}
 		createWait.Wait()
 		// any skipped pods that we never attempted to start shouldn't be expected.
-		skippedPods := createDiff - batchSize
+		skippedPods := createDiff - (batchSize + pos)
 		if errorCount < len(errCh) && skippedPods > 0 {
 			klog.V(2).Infof("Slow-start failure. Skipping creation of %d pods, decrementing expectations for set %q/%q", skippedPods, ds.Namespace, ds.Name)
 			for i := 0; i < skippedPods; i++ {
@@ -1198,6 +1207,10 @@ func (dsc *DaemonSetsController) updateDaemonSetStatus(ds *apps.DaemonSet, nodeL
 		return fmt.Errorf("error storing status for daemon set %#v: %v", ds, err)
 	}
 
+	// Resync the DaemonSet after MinReadySeconds as a last line of defense to guard against clock-skew.
+	if ds.Spec.MinReadySeconds > 0 && numberReady != numberAvailable {
+		dsc.enqueueDaemonSetAfter(ds, time.Duration(ds.Spec.MinReadySeconds)*time.Second)
+	}
 	return nil
 }
 

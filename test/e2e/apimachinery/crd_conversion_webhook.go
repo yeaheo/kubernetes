@@ -32,6 +32,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2edeploy "k8s.io/kubernetes/test/e2e/framework/deployment"
+	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	"k8s.io/kubernetes/test/utils/crd"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/pointer"
@@ -104,15 +106,21 @@ var _ = SIGDescribe("CustomResourceConversionWebhook [Feature:CustomResourceWebh
 	})
 
 	ginkgo.It("Should be able to convert from CR v1 to CR v2", func() {
-		testcrd, err := crd.CreateMultiVersionTestCRD(f, "stable.example.com", apiVersions,
-			&v1beta1.WebhookClientConfig{
-				CABundle: context.signingCert,
-				Service: &v1beta1.ServiceReference{
-					Namespace: f.Namespace.Name,
-					Name:      serviceCRDName,
-					Path:      pointer.StringPtr("/crdconvert"),
-					Port:      pointer.Int32Ptr(serviceCRDPort),
-				}})
+		testcrd, err := crd.CreateMultiVersionTestCRD(f, "stable.example.com", func(crd *v1beta1.CustomResourceDefinition) {
+			crd.Spec.Versions = apiVersions
+			crd.Spec.Conversion = &v1beta1.CustomResourceConversion{
+				Strategy: v1beta1.WebhookConverter,
+				WebhookClientConfig: &v1beta1.WebhookClientConfig{
+					CABundle: context.signingCert,
+					Service: &v1beta1.ServiceReference{
+						Namespace: f.Namespace.Name,
+						Name:      serviceCRDName,
+						Path:      pointer.StringPtr("/crdconvert"),
+						Port:      pointer.Int32Ptr(serviceCRDPort),
+					},
+				},
+			}
+		})
 		if err != nil {
 			return
 		}
@@ -121,15 +129,21 @@ var _ = SIGDescribe("CustomResourceConversionWebhook [Feature:CustomResourceWebh
 	})
 
 	ginkgo.It("Should be able to convert a non homogeneous list of CRs", func() {
-		testcrd, err := crd.CreateMultiVersionTestCRD(f, "stable.example.com", apiVersions,
-			&v1beta1.WebhookClientConfig{
-				CABundle: context.signingCert,
-				Service: &v1beta1.ServiceReference{
-					Namespace: f.Namespace.Name,
-					Name:      serviceCRDName,
-					Path:      pointer.StringPtr("/crdconvert"),
-					Port:      pointer.Int32Ptr(serviceCRDPort),
-				}})
+		testcrd, err := crd.CreateMultiVersionTestCRD(f, "stable.example.com", func(crd *v1beta1.CustomResourceDefinition) {
+			crd.Spec.Versions = apiVersions
+			crd.Spec.Conversion = &v1beta1.CustomResourceConversion{
+				Strategy: v1beta1.WebhookConverter,
+				WebhookClientConfig: &v1beta1.WebhookClientConfig{
+					CABundle: context.signingCert,
+					Service: &v1beta1.ServiceReference{
+						Namespace: f.Namespace.Name,
+						Name:      serviceCRDName,
+						Path:      pointer.StringPtr("/crdconvert"),
+						Port:      pointer.Int32Ptr(serviceCRDPort),
+					},
+				},
+			}
+		})
 		if err != nil {
 			return
 		}
@@ -168,7 +182,7 @@ func createAuthReaderRoleBindingForCRDConversion(f *framework.Framework, namespa
 		},
 	})
 	if err != nil && errors.IsAlreadyExists(err) {
-		framework.Logf("role binding %s already exists", roleBindingCRDName)
+		e2elog.Logf("role binding %s already exists", roleBindingCRDName)
 	} else {
 		framework.ExpectNoError(err, "creating role binding %s:webhook to access configMap", namespace)
 	}
@@ -254,9 +268,9 @@ func deployCustomResourceWebhookAndService(f *framework.Framework, image string,
 	deployment, err := client.AppsV1().Deployments(namespace).Create(d)
 	framework.ExpectNoError(err, "creating deployment %s in namespace %s", deploymentCRDName, namespace)
 	ginkgo.By("Wait for the deployment to be ready")
-	err = framework.WaitForDeploymentRevisionAndImage(client, namespace, deploymentCRDName, "1", image)
+	err = e2edeploy.WaitForDeploymentRevisionAndImage(client, namespace, deploymentCRDName, "1", image)
 	framework.ExpectNoError(err, "waiting for the deployment of image %s in %s in %s to complete", image, deploymentName, namespace)
-	err = framework.WaitForDeploymentComplete(client, deployment)
+	err = e2edeploy.WaitForDeploymentComplete(client, deployment)
 	framework.ExpectNoError(err, "waiting for the deployment status valid", image, deploymentCRDName, namespace)
 
 	ginkgo.By("Deploying the webhook service")

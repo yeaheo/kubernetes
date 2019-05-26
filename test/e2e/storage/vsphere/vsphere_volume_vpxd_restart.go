@@ -21,14 +21,15 @@ import (
 	"strconv"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo"
+	"github.com/onsi/gomega"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 )
 
@@ -67,7 +68,7 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 		vcNodesMap map[string][]node
 	)
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		// Requires SSH access to vCenter.
 		framework.SkipUnlessProviderIs("vsphere")
 
@@ -78,7 +79,7 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 
 		nodes := framework.GetReadySchedulableNodesOrDie(client)
 		numNodes := len(nodes.Items)
-		Expect(numNodes).NotTo(BeZero(), "No nodes are available for testing volume access through vpxd restart")
+		gomega.Expect(numNodes).NotTo(gomega.BeZero(), "No nodes are available for testing volume access through vpxd restart")
 
 		vcNodesMap = make(map[string][]node)
 		for i := 0; i < numNodes; i++ {
@@ -96,7 +97,7 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 		}
 	})
 
-	It("verify volume remains attached through vpxd restart", func() {
+	ginkgo.It("verify volume remains attached through vpxd restart", func() {
 		for vcHost, nodes := range vcNodesMap {
 			var (
 				volumePaths  []string
@@ -105,31 +106,31 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 				pods         []*v1.Pod
 			)
 
-			framework.Logf("Testing for nodes on vCenter host: %s", vcHost)
+			e2elog.Logf("Testing for nodes on vCenter host: %s", vcHost)
 
 			for i, node := range nodes {
-				By(fmt.Sprintf("Creating test vsphere volume %d", i))
+				ginkgo.By(fmt.Sprintf("Creating test vsphere volume %d", i))
 				volumePath, err := node.nodeInfo.VSphere.CreateVolume(&VolumeOptions{}, node.nodeInfo.DataCenterRef)
 				framework.ExpectNoError(err)
 				volumePaths = append(volumePaths, volumePath)
 
-				By(fmt.Sprintf("Creating pod %d on node %v", i, node.name))
+				ginkgo.By(fmt.Sprintf("Creating pod %d on node %v", i, node.name))
 				podspec := getVSpherePodSpecWithVolumePaths([]string{volumePath}, node.kvLabels, nil)
 				pod, err := client.CoreV1().Pods(namespace).Create(podspec)
 				framework.ExpectNoError(err)
 
-				By(fmt.Sprintf("Waiting for pod %d to be ready", i))
-				Expect(framework.WaitForPodNameRunningInNamespace(client, pod.Name, namespace)).To(Succeed())
+				ginkgo.By(fmt.Sprintf("Waiting for pod %d to be ready", i))
+				gomega.Expect(framework.WaitForPodNameRunningInNamespace(client, pod.Name, namespace)).To(gomega.Succeed())
 
 				pod, err = client.CoreV1().Pods(namespace).Get(pod.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err)
 				pods = append(pods, pod)
 
 				nodeName := pod.Spec.NodeName
-				By(fmt.Sprintf("Verifying that volume %v is attached to node %v", volumePath, nodeName))
+				ginkgo.By(fmt.Sprintf("Verifying that volume %v is attached to node %v", volumePath, nodeName))
 				expectVolumeToBeAttached(nodeName, volumePath)
 
-				By(fmt.Sprintf("Creating a file with random content on the volume mounted on pod %d", i))
+				ginkgo.By(fmt.Sprintf("Creating a file with random content on the volume mounted on pod %d", i))
 				filePath := fmt.Sprintf("/mnt/volume1/%v_vpxd_restart_test_%v.txt", namespace, strconv.FormatInt(time.Now().UnixNano(), 10))
 				randomContent := fmt.Sprintf("Random Content -- %v", strconv.FormatInt(time.Now().UnixNano(), 10))
 				err = writeContentToPodFile(namespace, pod.Name, filePath, randomContent)
@@ -138,7 +139,7 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 				fileContents = append(fileContents, randomContent)
 			}
 
-			By("Stopping vpxd on the vCenter host")
+			ginkgo.By("Stopping vpxd on the vCenter host")
 			vcAddress := vcHost + ":22"
 			err := invokeVCenterServiceControl("stop", vpxdServiceName, vcAddress)
 			framework.ExpectNoError(err, "Unable to stop vpxd on the vCenter host")
@@ -146,7 +147,7 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 			expectFilesToBeAccessible(namespace, pods, filePaths)
 			expectFileContentsToMatch(namespace, pods, filePaths, fileContents)
 
-			By("Starting vpxd on the vCenter host")
+			ginkgo.By("Starting vpxd on the vCenter host")
 			err = invokeVCenterServiceControl("start", vpxdServiceName, vcAddress)
 			framework.ExpectNoError(err, "Unable to start vpxd on the vCenter host")
 
@@ -159,15 +160,15 @@ var _ = utils.SIGDescribe("Verify Volume Attach Through vpxd Restart [Feature:vs
 				nodeName := pod.Spec.NodeName
 				volumePath := volumePaths[i]
 
-				By(fmt.Sprintf("Deleting pod on node %s", nodeName))
+				ginkgo.By(fmt.Sprintf("Deleting pod on node %s", nodeName))
 				err = framework.DeletePodWithWait(f, client, pod)
 				framework.ExpectNoError(err)
 
-				By(fmt.Sprintf("Waiting for volume %s to be detached from node %s", volumePath, nodeName))
+				ginkgo.By(fmt.Sprintf("Waiting for volume %s to be detached from node %s", volumePath, nodeName))
 				err = waitForVSphereDiskToDetach(volumePath, nodeName)
 				framework.ExpectNoError(err)
 
-				By(fmt.Sprintf("Deleting volume %s", volumePath))
+				ginkgo.By(fmt.Sprintf("Deleting volume %s", volumePath))
 				err = node.nodeInfo.VSphere.DeleteVolume(volumePath, node.nodeInfo.DataCenterRef)
 				framework.ExpectNoError(err)
 			}

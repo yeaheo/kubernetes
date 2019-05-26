@@ -31,10 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/legacy-cloud-providers/gce"
 )
 
 type gcePersistentDiskAttacher struct {
@@ -104,7 +104,7 @@ func (attacher *gcePersistentDiskAttacher) Attach(spec *volume.Spec, nodeName ty
 		}
 	}
 
-	return path.Join(diskByIDPath, diskGooglePrefix+pdName), nil
+	return filepath.Join(diskByIDPath, diskGooglePrefix+pdName), nil
 }
 
 func (attacher *gcePersistentDiskAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {

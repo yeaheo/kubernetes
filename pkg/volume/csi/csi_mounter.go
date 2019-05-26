@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 
 	"k8s.io/klog"
 
@@ -68,14 +69,14 @@ type csiMountMgr struct {
 	podUID         types.UID
 	options        volume.VolumeOptions
 	publishContext map[string]string
-	volume.MetricsNil
+	volume.MetricsProvider
 }
 
 // volume.Volume methods
 var _ volume.Volume = &csiMountMgr{}
 
 func (c *csiMountMgr) GetPath() string {
-	dir := path.Join(getTargetPath(c.podUID, c.specVolumeID, c.plugin.host), "/mount")
+	dir := filepath.Join(getTargetPath(c.podUID, c.specVolumeID, c.plugin.host), "/mount")
 	klog.V(4).Info(log("mounter.GetPath generated [%s]", dir))
 	return dir
 }
@@ -440,7 +441,7 @@ func removeMountDir(plug *csiPlugin, mountPath string) error {
 		}
 		// remove volume data file as well
 		volPath := path.Dir(mountPath)
-		dataFile := path.Join(volPath, volDataFileName)
+		dataFile := filepath.Join(volPath, volDataFileName)
 		klog.V(4).Info(log("also deleting volume info data file [%s]", dataFile))
 		if err := os.Remove(dataFile); err != nil && !os.IsNotExist(err) {
 			klog.Error(log("failed to delete volume data file [%s]: %v", dataFile, err))

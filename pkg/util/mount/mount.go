@@ -29,13 +29,12 @@ type FileType string
 
 const (
 	// Default mount command if mounter path is not specified
-	defaultMountCommand           = "mount"
-	MountsInGlobalPDPath          = "mounts"
-	FileTypeDirectory    FileType = "Directory"
-	FileTypeFile         FileType = "File"
-	FileTypeSocket       FileType = "Socket"
-	FileTypeCharDev      FileType = "CharDevice"
-	FileTypeBlockDev     FileType = "BlockDevice"
+	defaultMountCommand          = "mount"
+	FileTypeDirectory   FileType = "Directory"
+	FileTypeFile        FileType = "File"
+	FileTypeSocket      FileType = "Socket"
+	FileTypeCharDev     FileType = "CharDevice"
+	FileTypeBlockDev    FileType = "BlockDevice"
 )
 
 type Interface interface {
@@ -54,7 +53,7 @@ type Interface interface {
 	// is a mountpoint.
 	// It should return ErrNotExist when the directory does not exist.
 	// IsLikelyNotMountPoint does NOT properly detect all mountpoint types
-	// most notably linux bind mounts.
+	// most notably linux bind mounts and symbolic link.
 	IsLikelyNotMountPoint(file string) (bool, error)
 	// DeviceOpened determines if the device is in use elsewhere
 	// on the system, i.e. still mounted.
@@ -62,8 +61,8 @@ type Interface interface {
 	// PathIsDevice determines if a path is a device.
 	PathIsDevice(pathname string) (bool, error)
 	// GetDeviceNameFromMount finds the device name by checking the mount path
-	// to get the global mount path which matches its plugin directory
-	GetDeviceNameFromMount(mountPath, pluginDir string) (string, error)
+	// to get the global mount path within its plugin directory
+	GetDeviceNameFromMount(mountPath, pluginMountDir string) (string, error)
 	// MakeRShared checks that given path is on a mount with 'rshared' mount
 	// propagation. If not, it bind-mounts the path as rshared.
 	MakeRShared(path string) error

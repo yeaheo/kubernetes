@@ -40,6 +40,8 @@ import (
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	rbacv1beta1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1beta1"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2edeploy "k8s.io/kubernetes/test/e2e/framework/deployment"
+	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	samplev1alpha1 "k8s.io/sample-apiserver/pkg/apis/wardle/v1alpha1"
 	"k8s.io/utils/pointer"
@@ -262,9 +264,9 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	}
 	deployment, err := client.AppsV1().Deployments(namespace).Create(d)
 	framework.ExpectNoError(err, "creating deployment %s in namespace %s", deploymentName, namespace)
-	err = framework.WaitForDeploymentRevisionAndImage(client, namespace, deploymentName, "1", image)
+	err = e2edeploy.WaitForDeploymentRevisionAndImage(client, namespace, deploymentName, "1", image)
 	framework.ExpectNoError(err, "waiting for the deployment of image %s in %s in %s to complete", image, deploymentName, namespace)
-	err = framework.WaitForDeploymentRevisionAndImage(client, namespace, deploymentName, "1", etcdImage)
+	err = e2edeploy.WaitForDeploymentRevisionAndImage(client, namespace, deploymentName, "1", etcdImage)
 	framework.ExpectNoError(err, "waiting for the deployment of image %s in %s to complete", etcdImage, deploymentName, namespace)
 
 	// kubectl create -f service.yaml
@@ -321,7 +323,7 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	// kubectl get deployments -n <aggregated-api-namespace> && status == Running
 	// NOTE: aggregated apis should generally be set up in their own namespace (<aggregated-api-namespace>). As the test framework
 	// is setting up a new namespace, we are just using that.
-	err = framework.WaitForDeploymentComplete(client, deployment)
+	err = e2edeploy.WaitForDeploymentComplete(client, deployment)
 	framework.ExpectNoError(err, "deploying extension apiserver in namespace %s", namespace)
 
 	// kubectl create -f apiservice.yaml
@@ -372,16 +374,16 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 	}, "Waited %s for the sample-apiserver to be ready to handle requests.")
 	if err != nil {
 		currentAPIServiceJSON, _ := json.Marshal(currentAPIService)
-		framework.Logf("current APIService: %s", string(currentAPIServiceJSON))
+		e2elog.Logf("current APIService: %s", string(currentAPIServiceJSON))
 
 		currentPodsJSON, _ := json.Marshal(currentPods)
-		framework.Logf("current pods: %s", string(currentPodsJSON))
+		e2elog.Logf("current pods: %s", string(currentPodsJSON))
 
 		if currentPods != nil {
 			for _, pod := range currentPods.Items {
 				for _, container := range pod.Spec.Containers {
 					logs, err := framework.GetPodLogs(client, namespace, pod.Name, container.Name)
-					framework.Logf("logs of %s/%s (error: %v): %s", pod.Name, container.Name, err, logs)
+					e2elog.Logf("logs of %s/%s (error: %v): %s", pod.Name, container.Name, err, logs)
 				}
 			}
 		}
@@ -484,12 +486,12 @@ func TestSampleAPIServer(f *framework.Framework, aggrclient *aggregatorclient.Cl
 }
 
 // pollTimed will call Poll but time how long Poll actually took.
-// It will then framework.logf the msg with the duration of the Poll.
+// It will then e2elog.Logf the msg with the duration of the Poll.
 // It is assumed that msg will contain one %s for the elapsed time.
 func pollTimed(interval, timeout time.Duration, condition wait.ConditionFunc, msg string) error {
 	defer func(start time.Time, msg string) {
 		elapsed := time.Since(start)
-		framework.Logf(msg, elapsed)
+		e2elog.Logf(msg, elapsed)
 	}(time.Now(), msg)
 	return wait.Poll(interval, timeout, condition)
 }
