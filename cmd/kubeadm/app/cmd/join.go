@@ -133,7 +133,7 @@ type joinOptions struct {
 // compile-time assert that the local data object satisfies the phases data interface.
 var _ phases.JoinData = &joinData{}
 
-// joinData defines all the runtime information used when running the kubeadm join worklow;
+// joinData defines all the runtime information used when running the kubeadm join workflow;
 // this data is shared across all the phases that are included in the workflow.
 type joinData struct {
 	cfg                   *kubeadmapi.JoinConfiguration
@@ -275,6 +275,11 @@ func addJoinOtherFlags(flagSet *flag.FlagSet, joinOptions *joinOptions) {
 		&joinOptions.controlPlane, options.ControlPlane, joinOptions.controlPlane,
 		"Create a new control plane instance on this node",
 	)
+	flagSet.BoolVar(
+		&joinOptions.controlPlane, options.ExperimentalControlPlane, joinOptions.controlPlane,
+		"Create a new control plane instance on this node",
+	)
+	flagSet.MarkDeprecated(options.ExperimentalControlPlane, fmt.Sprintf("use --%s instead", options.ControlPlane))
 }
 
 // newJoinOptions returns a struct ready for being used for creating cmd join flags.

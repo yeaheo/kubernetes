@@ -30,6 +30,8 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/gpu"
 	jobutil "k8s.io/kubernetes/test/e2e/framework/job"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/framework/providers/gce"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
@@ -140,10 +142,10 @@ func SetupNVIDIAGPUNode(f *framework.Framework, setupResourceGatherer bool) *fra
 	framework.ExpectNoError(err, "failed to create nvidia-driver-installer daemonset")
 	e2elog.Logf("Successfully created daemonset to install Nvidia drivers.")
 
-	pods, err := framework.WaitForControlledPods(f.ClientSet, ds.Namespace, ds.Name, extensionsinternal.Kind("DaemonSet"))
+	pods, err := e2epod.WaitForControlledPods(f.ClientSet, ds.Namespace, ds.Name, extensionsinternal.Kind("DaemonSet"))
 	framework.ExpectNoError(err, "failed to get pods controlled by the nvidia-driver-installer daemonset")
 
-	devicepluginPods, err := framework.WaitForControlledPods(f.ClientSet, "kube-system", "nvidia-gpu-device-plugin", extensionsinternal.Kind("DaemonSet"))
+	devicepluginPods, err := e2epod.WaitForControlledPods(f.ClientSet, "kube-system", "nvidia-gpu-device-plugin", extensionsinternal.Kind("DaemonSet"))
 	if err == nil {
 		e2elog.Logf("Adding deviceplugin addon pod.")
 		pods.Items = append(pods.Items, devicepluginPods.Items...)
@@ -208,9 +210,9 @@ func testNvidiaGPUsJob(f *framework.Framework) {
 	err = jobutil.WaitForAllJobPodsRunning(f.ClientSet, f.Namespace.Name, job.Name, 1)
 	framework.ExpectNoError(err)
 
-	numNodes, err := framework.NumberOfRegisteredNodes(f.ClientSet)
+	numNodes, err := e2enode.TotalRegistered(f.ClientSet)
 	framework.ExpectNoError(err)
-	nodes, err := framework.CheckNodesReady(f.ClientSet, numNodes, framework.NodeReadyInitialTimeout)
+	nodes, err := e2enode.CheckReady(f.ClientSet, numNodes, framework.NodeReadyInitialTimeout)
 	framework.ExpectNoError(err)
 
 	ginkgo.By("Recreating nodes")
@@ -250,7 +252,7 @@ func StartJob(f *framework.Framework, completions int32) {
 	ns := f.Namespace.Name
 	_, err := jobutil.CreateJob(f.ClientSet, ns, testJob)
 	framework.ExpectNoError(err)
-	framework.Logf("Created job %v", testJob)
+	e2elog.Logf("Created job %v", testJob)
 }
 
 // VerifyJobNCompletions verifies that the job has completions number of successful pods
@@ -260,12 +262,12 @@ func VerifyJobNCompletions(f *framework.Framework, completions int32) {
 	framework.ExpectNoError(err)
 	createdPods := pods.Items
 	createdPodNames := podNames(createdPods)
-	framework.Logf("Got the following pods for job cuda-add: %v", createdPodNames)
+	e2elog.Logf("Got the following pods for job cuda-add: %v", createdPodNames)
 
 	successes := int32(0)
 	for _, podName := range createdPodNames {
 		f.PodClient().WaitForFinish(podName, 5*time.Minute)
-		logs, err := framework.GetPodLogs(f.ClientSet, ns, podName, "vector-addition")
+		logs, err := e2epod.GetPodLogs(f.ClientSet, ns, podName, "vector-addition")
 		framework.ExpectNoError(err, "Should be able to get logs for pod %v", podName)
 		regex := regexp.MustCompile("PASSED")
 		if regex.MatchString(logs) {

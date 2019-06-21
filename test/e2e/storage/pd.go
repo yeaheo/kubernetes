@@ -30,7 +30,7 @@ import (
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
-	policy "k8s.io/api/policy/v1beta1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,6 +40,7 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	"k8s.io/kubernetes/test/e2e/framework/providers/gce"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -410,7 +411,7 @@ var _ = utils.SIGDescribe("Pod Disks", func() {
 					framework.ExpectNoError(podClient.Delete(host0Pod.Name, metav1.NewDeleteOptions(0)), "Unable to delete host0Pod")
 
 				} else if disruptOp == evictPod {
-					evictTarget := &policy.Eviction{
+					evictTarget := &policyv1beta1.Eviction{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      host0Pod.Name,
 							Namespace: ns,
@@ -442,7 +443,7 @@ var _ = utils.SIGDescribe("Pod Disks", func() {
 })
 
 func countReadyNodes(c clientset.Interface, hostName types.NodeName) int {
-	framework.WaitForNodeToBeReady(c, string(hostName), nodeStatusTimeout)
+	e2enode.WaitForNodeToBeReady(c, string(hostName), nodeStatusTimeout)
 	framework.WaitForAllNodesSchedulable(c, nodeStatusTimeout)
 	nodes := framework.GetReadySchedulableNodesOrDie(c)
 	return len(nodes.Items)

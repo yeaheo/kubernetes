@@ -146,7 +146,7 @@ func skipUnsupportedTest(driver TestDriver, pattern testpatterns.TestPattern) {
 		if !dInfo.SupportedFsType.Has(pattern.FsType) {
 			framework.Skipf("Driver %s doesn't support %v -- skipping", dInfo.Name, pattern.FsType)
 		}
-		if pattern.FsType == "xfs" && framework.NodeOSDistroIs("gci") {
+		if pattern.FsType == "xfs" && framework.NodeOSDistroIs("gci", "cos", "windows") {
 			framework.Skipf("Distro doesn't support xfs -- skipping")
 		}
 		if pattern.FsType == "ntfs" && !framework.NodeOSDistroIs("windows") {
@@ -507,6 +507,10 @@ func getVolumeOpsFromMetricsForPlugin(ms metrics.Metrics, pluginName string) opC
 }
 
 func getVolumeOpCounts(c clientset.Interface, pluginName string) opCounts {
+	if !framework.ProviderIs("gce", "gke", "aws") {
+		return opCounts{}
+	}
+
 	nodeLimit := 25
 
 	metricsGrabber, err := metrics.NewMetricsGrabber(c, nil, true, false, true, false, false)
@@ -570,15 +574,14 @@ func getMigrationVolumeOpCounts(cs clientset.Interface, pluginName string) (opCo
 			migratedOps = getVolumeOpCounts(cs, csiName)
 		}
 		return getVolumeOpCounts(cs, pluginName), migratedOps
-	} else {
-		// Not an in-tree driver
-		e2elog.Logf("Test running for native CSI Driver, not checking metrics")
-		return opCounts{}, opCounts{}
 	}
+	// Not an in-tree driver
+	e2elog.Logf("Test running for native CSI Driver, not checking metrics")
+	return opCounts{}, opCounts{}
 }
 
 func getTotOps(ops opCounts) int64 {
-	var tot int64 = 0
+	var tot = int64(0)
 	for _, count := range ops {
 		tot += count
 	}

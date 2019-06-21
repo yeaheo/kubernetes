@@ -28,7 +28,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	storage "k8s.io/api/storage/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,6 +40,7 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/storage/testsuites"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -221,13 +222,13 @@ func testZonalFailover(c clientset.Interface, ns string) {
 	pod := getPod(c, ns, regionalPDLabels)
 	nodeName := pod.Spec.NodeName
 	node, err := c.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	framework.ExpectNoError(err)
 	podZone := node.Labels[v1.LabelZoneFailureDomain]
 
 	ginkgo.By("tainting nodes in the zone the pod is scheduled in")
 	selector := labels.SelectorFromSet(labels.Set(map[string]string{v1.LabelZoneFailureDomain: podZone}))
 	nodesInZone, err := c.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: selector.String()})
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	framework.ExpectNoError(err)
 	removeTaintFunc := addTaint(c, ns, nodesInZone.Items, podZone)
 
 	defer func() {
@@ -272,7 +273,7 @@ func testZonalFailover(c clientset.Interface, ns string) {
 		"The same PVC should be used after failover.")
 
 	ginkgo.By("verifying the container output has 2 lines, indicating the pod has been created twice using the same regional PD.")
-	logs, err := framework.GetPodLogs(c, ns, pod.Name, "")
+	logs, err := e2epod.GetPodLogs(c, ns, pod.Name, "")
 	framework.ExpectNoError(err,
 		"Error getting logs from pod %s in namespace %s", pod.Name, ns)
 	lineCount := len(strings.Split(strings.TrimSpace(logs), "\n"))
@@ -305,13 +306,13 @@ func addTaint(c clientset.Interface, ns string, nodes []v1.Node, podZone string)
 		reversePatches[node.Name] = reversePatchBytes
 
 		_, err = c.CoreV1().Nodes().Patch(node.Name, types.StrategicMergePatchType, patchBytes)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		framework.ExpectNoError(err)
 	}
 
 	return func() {
 		for nodeName, reversePatch := range reversePatches {
 			_, err := c.CoreV1().Nodes().Patch(nodeName, types.StrategicMergePatchType, reversePatch)
-			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			framework.ExpectNoError(err)
 		}
 	}
 }
@@ -440,7 +441,7 @@ func getPod(c clientset.Interface, ns string, podLabels map[string]string) *v1.P
 	return &podList.Items[0]
 }
 
-func addAllowedTopologiesToStorageClass(c clientset.Interface, sc *storage.StorageClass, zones []string) {
+func addAllowedTopologiesToStorageClass(c clientset.Interface, sc *storagev1.StorageClass, zones []string) {
 	term := v1.TopologySelectorTerm{
 		MatchLabelExpressions: []v1.TopologySelectorLabelRequirement{
 			{
@@ -534,7 +535,7 @@ func newPodTemplate(labels map[string]string) *v1.PodTemplateSpec {
 
 func getTwoRandomZones(c clientset.Interface) []string {
 	zones, err := framework.GetClusterZones(c)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	framework.ExpectNoError(err)
 	gomega.Expect(zones.Len()).To(gomega.BeNumerically(">=", 2),
 		"The test should only be run in multizone clusters.")
 

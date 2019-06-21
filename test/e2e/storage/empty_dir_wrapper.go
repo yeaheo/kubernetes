@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
@@ -220,7 +221,8 @@ func createGitServer(f *framework.Framework) (gitURL string, gitRepo string, cle
 			Containers: []v1.Container{
 				{
 					Name:            "git-repo",
-					Image:           imageutils.GetE2EImage(imageutils.Fakegitserver),
+					Image:           imageutils.GetE2EImage(imageutils.Agnhost),
+					Args:            []string{"fake-gitserver"},
 					ImagePullPolicy: "IfNotPresent",
 					Ports: []v1.ContainerPort{
 						{ContainerPort: int32(containerPort)},
@@ -410,7 +412,7 @@ func testNoWrappedVolumeRace(f *framework.Framework, volumes []v1.Volume, volume
 		framework.ExpectNoError(err)
 	}()
 
-	pods, err := framework.PodsCreated(f.ClientSet, f.Namespace.Name, rcName, podCount)
+	pods, err := e2epod.PodsCreated(f.ClientSet, f.Namespace.Name, rcName, podCount)
 
 	ginkgo.By("Ensuring each pod is running")
 

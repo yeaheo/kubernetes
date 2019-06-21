@@ -28,6 +28,8 @@ import (
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
@@ -53,7 +55,7 @@ var _ = framework.KubeDescribe("EquivalenceCache [Serial]", func() {
 		cs = f.ClientSet
 		ns = f.Namespace.Name
 
-		framework.WaitForAllNodesHealthy(cs, time.Minute)
+		e2enode.WaitForTotalHealthy(cs, time.Minute)
 		masterNodes, nodeList = framework.GetMasterAndWorkerNodesOrDie(cs)
 
 		framework.ExpectNoError(framework.CheckTestingNSDeletedExcept(cs, ns))
@@ -61,7 +63,7 @@ var _ = framework.KubeDescribe("EquivalenceCache [Serial]", func() {
 		// Every test case in this suite assumes that cluster add-on pods stay stable and
 		// cannot be run in parallel with any other test that touches Nodes or Pods.
 		// It is so because we need to have precise control on what's running in the cluster.
-		systemPods, err := framework.GetPodsInNamespace(cs, ns, map[string]string{})
+		systemPods, err := e2epod.GetPodsInNamespace(cs, ns, map[string]string{})
 		framework.ExpectNoError(err)
 		systemPodsNo = 0
 		for _, pod := range systemPods {
@@ -70,7 +72,7 @@ var _ = framework.KubeDescribe("EquivalenceCache [Serial]", func() {
 			}
 		}
 
-		err = framework.WaitForPodsRunningReady(cs, api.NamespaceSystem, int32(systemPodsNo), int32(systemPodsNo), framework.PodReadyBeforeTimeout, map[string]string{})
+		err = e2epod.WaitForPodsRunningReady(cs, api.NamespaceSystem, int32(systemPodsNo), int32(systemPodsNo), framework.PodReadyBeforeTimeout, map[string]string{})
 		framework.ExpectNoError(err)
 
 		for _, node := range nodeList.Items {
@@ -153,7 +155,7 @@ var _ = framework.KubeDescribe("EquivalenceCache [Serial]", func() {
 		// not for successful RC, since no specific pod name can be provided.
 		_, err := cs.CoreV1().ReplicationControllers(ns).Create(rc)
 		framework.ExpectNoError(err)
-		framework.ExpectNoError(framework.WaitForControlledPodsRunning(cs, ns, affinityRCName, api.Kind("ReplicationController")))
+		framework.ExpectNoError(e2epod.WaitForControlledPodsRunning(cs, ns, affinityRCName, api.Kind("ReplicationController")))
 
 		ginkgo.By("Remove node failure domain label")
 		framework.RemoveLabelOffNode(cs, nodeName, k)

@@ -37,7 +37,7 @@ import (
 	compute "google.golang.org/api/compute/v1"
 	"k8s.io/klog"
 
-	apps "k8s.io/api/apps/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -49,6 +49,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	"k8s.io/kubernetes/test/e2e/framework/testfiles"
 	"k8s.io/kubernetes/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
@@ -134,12 +136,12 @@ type E2ELogger struct{}
 
 // Infof outputs log.
 func (l *E2ELogger) Infof(format string, args ...interface{}) {
-	framework.Logf(format, args...)
+	e2elog.Logf(format, args...)
 }
 
 // Errorf outputs log.
 func (l *E2ELogger) Errorf(format string, args ...interface{}) {
-	framework.Logf(format, args...)
+	e2elog.Logf(format, args...)
 }
 
 // ConformanceTests contains a closure with an entry and exit log line.
@@ -334,7 +336,7 @@ func BuildInsecureClient(timeout time.Duration) *http.Client {
 // Ingress, it's updated.
 func createTLSSecret(kubeClient clientset.Interface, namespace, secretName string, hosts ...string) (host string, rootCA, privKey []byte, err error) {
 	host = strings.Join(hosts, ",")
-	framework.Logf("Generating RSA cert for host %v", host)
+	e2elog.Logf("Generating RSA cert for host %v", host)
 	cert, key, err := GenerateRSACerts(host, true)
 	if err != nil {
 		return
@@ -351,11 +353,11 @@ func createTLSSecret(kubeClient clientset.Interface, namespace, secretName strin
 	var s *v1.Secret
 	if s, err = kubeClient.CoreV1().Secrets(namespace).Get(secretName, metav1.GetOptions{}); err == nil {
 		// TODO: Retry the update. We don't really expect anything to conflict though.
-		framework.Logf("Updating secret %v in ns %v with hosts %v", secret.Name, namespace, host)
+		e2elog.Logf("Updating secret %v in ns %v with hosts %v", secret.Name, namespace, host)
 		s.Data = secret.Data
 		_, err = kubeClient.CoreV1().Secrets(namespace).Update(s)
 	} else {
-		framework.Logf("Creating secret %v in ns %v with hosts %v", secret.Name, namespace, host)
+		e2elog.Logf("Creating secret %v in ns %v with hosts %v", secret.Name, namespace, host)
 		_, err = kubeClient.CoreV1().Secrets(namespace).Create(secret)
 	}
 	return host, cert, key, err
@@ -732,7 +734,7 @@ func (j *TestJig) VerifyURL(route, host string, iterations int, interval time.Du
 	for i := 0; i < iterations; i++ {
 		b, err := framework.SimpleGET(httpClient, route, host)
 		if err != nil {
-			framework.Logf(b)
+			e2elog.Logf(b)
 			return err
 		}
 		j.Logger.Infof("Verified %v with host %v %d times, sleeping for %v", route, host, i, interval)
@@ -743,7 +745,7 @@ func (j *TestJig) VerifyURL(route, host string, iterations int, interval time.Du
 
 func (j *TestJig) pollServiceNodePort(ns, name string, port int) error {
 	// TODO: Curl all nodes?
-	u, err := framework.GetNodePortURL(j.Client, ns, name, port)
+	u, err := e2enode.GetPortURL(j.Client, ns, name, port)
 	if err != nil {
 		return err
 	}
@@ -843,14 +845,14 @@ func (cont *NginxIngressController) Init() {
 	read := func(file string) string {
 		return string(testfiles.ReadOrDie(filepath.Join(IngressManifestPath, "nginx", file), ginkgo.Fail))
 	}
-	framework.Logf("initializing nginx ingress controller")
+	e2elog.Logf("initializing nginx ingress controller")
 	framework.RunKubectlOrDieInput(read("rc.yaml"), "create", "-f", "-", fmt.Sprintf("--namespace=%v", cont.Ns))
 
 	rc, err := cont.Client.CoreV1().ReplicationControllers(cont.Ns).Get("nginx-ingress-controller", metav1.GetOptions{})
 	framework.ExpectNoError(err)
 	cont.rc = rc
 
-	framework.Logf("waiting for pods with label %v", rc.Spec.Selector)
+	e2elog.Logf("waiting for pods with label %v", rc.Spec.Selector)
 	sel := labels.SelectorFromSet(labels.Set(rc.Spec.Selector))
 	framework.ExpectNoError(testutils.WaitForPodsWithLabelRunning(cont.Client, cont.Ns, sel))
 	pods, err := cont.Client.CoreV1().Pods(cont.Ns).List(metav1.ListOptions{LabelSelector: sel.String()})
@@ -861,7 +863,7 @@ func (cont *NginxIngressController) Init() {
 	cont.pod = &pods.Items[0]
 	cont.externalIP, err = framework.GetHostExternalAddress(cont.Client, cont.pod)
 	framework.ExpectNoError(err)
-	framework.Logf("ingress controller running in pod %v on ip %v", cont.pod.Name, cont.externalIP)
+	e2elog.Logf("ingress controller running in pod %v on ip %v", cont.pod.Name, cont.externalIP)
 }
 
 func generateBacksideHTTPSIngressSpec(ns string) *networkingv1beta1.Ingress {
@@ -906,12 +908,12 @@ func generateBacksideHTTPSServiceSpec() *v1.Service {
 	}
 }
 
-func generateBacksideHTTPSDeploymentSpec() *apps.Deployment {
-	return &apps.Deployment{
+func generateBacksideHTTPSDeploymentSpec() *appsv1.Deployment {
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "echoheaders-https",
 		},
-		Spec: apps.DeploymentSpec{
+		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{
 				"app": "echoheaders-https",
 			}},
@@ -939,7 +941,7 @@ func generateBacksideHTTPSDeploymentSpec() *apps.Deployment {
 }
 
 // SetUpBacksideHTTPSIngress sets up deployment, service and ingress with backside HTTPS configured.
-func (j *TestJig) SetUpBacksideHTTPSIngress(cs clientset.Interface, namespace string, staticIPName string) (*apps.Deployment, *v1.Service, *networkingv1beta1.Ingress, error) {
+func (j *TestJig) SetUpBacksideHTTPSIngress(cs clientset.Interface, namespace string, staticIPName string) (*appsv1.Deployment, *v1.Service, *networkingv1beta1.Ingress, error) {
 	deployCreated, err := cs.AppsV1().Deployments(namespace).Create(generateBacksideHTTPSDeploymentSpec())
 	if err != nil {
 		return nil, nil, nil, err
@@ -963,7 +965,7 @@ func (j *TestJig) SetUpBacksideHTTPSIngress(cs clientset.Interface, namespace st
 }
 
 // DeleteTestResource deletes given deployment, service and ingress.
-func (j *TestJig) DeleteTestResource(cs clientset.Interface, deploy *apps.Deployment, svc *v1.Service, ing *networkingv1beta1.Ingress) []error {
+func (j *TestJig) DeleteTestResource(cs clientset.Interface, deploy *appsv1.Deployment, svc *v1.Service, ing *networkingv1beta1.Ingress) []error {
 	var errs []error
 	if ing != nil {
 		if err := j.runDelete(ing); err != nil {

@@ -31,8 +31,10 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
+	kubeletdevicepluginv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
 	dm "k8s.io/kubernetes/pkg/kubelet/cm/devicemanager"
 
 	. "github.com/onsi/ginkgo"
@@ -63,13 +65,13 @@ func testDevicePlugin(f *framework.Framework, pluginSockDir string) {
 		It("Verifies the Kubelet device plugin functionality.", func() {
 			By("Start stub device plugin")
 			// fake devices for e2e test
-			devs := []*pluginapi.Device{
-				{ID: "Dev-1", Health: pluginapi.Healthy},
-				{ID: "Dev-2", Health: pluginapi.Healthy},
+			devs := []*kubeletdevicepluginv1beta1.Device{
+				{ID: "Dev-1", Health: kubeletdevicepluginv1beta1.Healthy},
+				{ID: "Dev-2", Health: kubeletdevicepluginv1beta1.Healthy},
 			}
 
 			socketPath := pluginSockDir + "dp." + fmt.Sprintf("%d", time.Now().Unix())
-			framework.Logf("socketPath %v", socketPath)
+			e2elog.Logf("socketPath %v", socketPath)
 
 			dp1 := dm.NewDevicePluginStub(devs, socketPath, resourceName, false)
 			dp1.SetAllocFunc(stubAllocFunc)
@@ -77,7 +79,7 @@ func testDevicePlugin(f *framework.Framework, pluginSockDir string) {
 			framework.ExpectNoError(err)
 
 			By("Register resources")
-			err = dp1.Register(pluginapi.KubeletSocket, resourceName, pluginSockDir)
+			err = dp1.Register(kubeletdevicepluginv1beta1.KubeletSocket, resourceName, pluginSockDir)
 			framework.ExpectNoError(err)
 
 			By("Waiting for the resource exported by the stub device plugin to become available on the local node")
@@ -140,7 +142,7 @@ func testDevicePlugin(f *framework.Framework, pluginSockDir string) {
 			err = dp1.Start()
 			framework.ExpectNoError(err)
 
-			err = dp1.Register(pluginapi.KubeletSocket, resourceName, pluginSockDir)
+			err = dp1.Register(kubeletdevicepluginv1beta1.KubeletSocket, resourceName, pluginSockDir)
 			framework.ExpectNoError(err)
 
 			ensurePodContainerRestart(f, pod1.Name, pod1.Name)
@@ -190,7 +192,7 @@ func testDevicePlugin(f *framework.Framework, pluginSockDir string) {
 			err = dp1.Start()
 			framework.ExpectNoError(err)
 
-			err = dp1.Register(pluginapi.KubeletSocket, resourceName, pluginSockDir)
+			err = dp1.Register(kubeletdevicepluginv1beta1.KubeletSocket, resourceName, pluginSockDir)
 			framework.ExpectNoError(err)
 
 			By("Waiting for the resource exported by the stub device plugin to become healthy on the local node")
@@ -257,19 +259,19 @@ func ensurePodContainerRestart(f *framework.Framework, podName string, contName 
 			return false
 		}
 		currentCount = p.Status.ContainerStatuses[0].RestartCount
-		framework.Logf("initial %v, current %v", initialCount, currentCount)
+		e2elog.Logf("initial %v, current %v", initialCount, currentCount)
 		return currentCount > initialCount
 	}, 5*time.Minute, framework.Poll).Should(BeTrue())
 }
 
 // parseLog returns the matching string for the specified regular expression parsed from the container logs.
 func parseLog(f *framework.Framework, podName string, contName string, re string) string {
-	logs, err := framework.GetPodLogs(f.ClientSet, f.Namespace.Name, podName, contName)
+	logs, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, podName, contName)
 	if err != nil {
 		framework.Failf("GetPodLogs for pod %q failed: %v", podName, err)
 	}
 
-	framework.Logf("got pod logs: %v", logs)
+	e2elog.Logf("got pod logs: %v", logs)
 	regex := regexp.MustCompile(re)
 	matches := regex.FindStringSubmatch(logs)
 	if len(matches) < 2 {
@@ -300,17 +302,17 @@ func numberOfDevicesAllocatable(node *v1.Node, resourceName string) int64 {
 }
 
 // stubAllocFunc will pass to stub device plugin
-func stubAllocFunc(r *pluginapi.AllocateRequest, devs map[string]pluginapi.Device) (*pluginapi.AllocateResponse, error) {
-	var responses pluginapi.AllocateResponse
+func stubAllocFunc(r *kubeletdevicepluginv1beta1.AllocateRequest, devs map[string]kubeletdevicepluginv1beta1.Device) (*kubeletdevicepluginv1beta1.AllocateResponse, error) {
+	var responses kubeletdevicepluginv1beta1.AllocateResponse
 	for _, req := range r.ContainerRequests {
-		response := &pluginapi.ContainerAllocateResponse{}
+		response := &kubeletdevicepluginv1beta1.ContainerAllocateResponse{}
 		for _, requestID := range req.DevicesIDs {
 			dev, ok := devs[requestID]
 			if !ok {
 				return nil, fmt.Errorf("invalid allocation request with non-existing device %s", requestID)
 			}
 
-			if dev.Health != pluginapi.Healthy {
+			if dev.Health != kubeletdevicepluginv1beta1.Healthy {
 				return nil, fmt.Errorf("invalid allocation request with unhealthy device: %s", requestID)
 			}
 
@@ -326,7 +328,7 @@ func stubAllocFunc(r *pluginapi.AllocateRequest, devs map[string]pluginapi.Devic
 
 			f.Close()
 
-			response.Mounts = append(response.Mounts, &pluginapi.Mount{
+			response.Mounts = append(response.Mounts, &kubeletdevicepluginv1beta1.Mount{
 				ContainerPath: fpath,
 				HostPath:      fpath,
 			})
