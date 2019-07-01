@@ -44,7 +44,6 @@ source "${KUBE_ROOT}/test/cmd/get.sh"
 source "${KUBE_ROOT}/test/cmd/kubeadm.sh"
 source "${KUBE_ROOT}/test/cmd/kubeconfig.sh"
 source "${KUBE_ROOT}/test/cmd/node-management.sh"
-source "${KUBE_ROOT}/test/cmd/old-print.sh"
 source "${KUBE_ROOT}/test/cmd/plugins.sh"
 source "${KUBE_ROOT}/test/cmd/proxy.sh"
 source "${KUBE_ROOT}/test/cmd/rbac.sh"
@@ -365,7 +364,6 @@ runTests() {
   pdb_min_available=".spec.minAvailable"
   pdb_max_unavailable=".spec.maxUnavailable"
   generation_field=".metadata.generation"
-  template_generation_field=".spec.templateGeneration"
   container_len="(len .spec.template.spec.containers)"
   image_field0="(index .spec.template.spec.containers 0).image"
   image_field1="(index .spec.template.spec.containers 1).image"
@@ -504,7 +502,6 @@ runTests() {
 
   if kube::test::if_supports_resource "${pods}" ; then
     record_command run_kubectl_get_tests
-    record_command run_kubectl_old_print_tests
   fi
 
   ################

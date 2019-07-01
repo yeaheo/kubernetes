@@ -438,7 +438,7 @@ run_pod_tests() {
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
   ## Patch can modify a local object
-  kubectl patch --local -f pkg/kubectl/validation/testdata/v1/validPod.yaml --patch='{"spec": {"restartPolicy":"Never"}}' -o yaml | grep -q "Never"
+  kubectl patch --local -f test/fixtures/pkg/kubectl/cmd/patch/validPod.yaml --patch='{"spec": {"restartPolicy":"Never"}}' -o yaml | grep -q "Never"
 
   ## Patch fails with type restore error and exit code 1
   output_message=$(! kubectl patch "${kube_flags[@]}" pod valid-pod -p='{"metadata":{"labels":"invalid"}}' 2>&1)
@@ -1123,24 +1123,8 @@ run_rc_tests() {
   kube::test::if_has_string "${output_message}" 'service/expose-test-deployment exposed'
   # Clean-up
   kubectl delete service/expose-test-deployment "${kube_flags[@]}"
-  # Uses deployment selectors for created service
-  output_message=$(kubectl expose -f test/fixtures/pkg/kubectl/cmd/expose/appsv1beta2deployment.yaml --port 80 2>&1 "${kube_flags[@]}")
-  # Post-condition: service created for deployment.
-  kube::test::if_has_string "${output_message}" 'service/expose-test-deployment exposed'
-  # Clean-up
-  kubectl delete service/expose-test-deployment "${kube_flags[@]}"
-  # Uses deployment selectors for created service
-  output_message=$(kubectl expose -f test/fixtures/pkg/kubectl/cmd/expose/appsv1beta1deployment.yaml --port 80 2>&1 "${kube_flags[@]}")
-  # Post-condition: service created for deployment.
-  kube::test::if_has_string "${output_message}" 'service/expose-test-deployment exposed'
-  # Clean-up
-  kubectl delete service/expose-test-deployment "${kube_flags[@]}"
   # Contains no selectors, should fail.
   output_message=$(! kubectl expose -f test/fixtures/pkg/kubectl/cmd/expose/appsv1deployment-no-selectors.yaml --port 80 2>&1 "${kube_flags[@]}")
-  # Post-condition: service created for deployment.
-  kube::test::if_has_string "${output_message}" 'invalid deployment: no selectors'
-  # Contains no selectors, should fail.
-  output_message=$(! kubectl expose -f test/fixtures/pkg/kubectl/cmd/expose/appsv1beta2deployment-no-selectors.yaml --port 80 2>&1 "${kube_flags[@]}")
   # Post-condition: service created for deployment.
   kube::test::if_has_string "${output_message}" 'invalid deployment: no selectors'
 

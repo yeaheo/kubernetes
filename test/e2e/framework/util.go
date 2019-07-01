@@ -48,9 +48,7 @@ import (
 	gomegatypes "github.com/onsi/gomega/types"
 
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
-	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -74,10 +72,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	watchtools "k8s.io/client-go/tools/watch"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	appsinternal "k8s.io/kubernetes/pkg/apis/apps"
-	batchinternal "k8s.io/kubernetes/pkg/apis/batch"
-	api "k8s.io/kubernetes/pkg/apis/core"
-	extensionsinternal "k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/client/conditions"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/service"
@@ -91,6 +85,7 @@ import (
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2eresource "k8s.io/kubernetes/test/e2e/framework/resource"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -224,7 +219,7 @@ var (
 	}
 
 	// ServeHostnameImage is a serve hostname image name.
-	ServeHostnameImage = imageutils.GetE2EImage(imageutils.ServeHostname)
+	ServeHostnameImage = imageutils.GetE2EImage(imageutils.Agnhost)
 )
 
 // GetServicesProxyRequest returns a request for a service proxy.
@@ -252,19 +247,6 @@ func nowStamp() string {
 
 func log(level string, format string, args ...interface{}) {
 	fmt.Fprintf(ginkgo.GinkgoWriter, nowStamp()+": "+level+": "+format+"\n", args...)
-}
-
-// Failf logs the fail info.
-func Failf(format string, args ...interface{}) {
-	FailfWithOffset(1, format, args...)
-}
-
-// FailfWithOffset calls "Fail" and logs the error at "offset" levels above its caller
-// (for example, for call chain f -> g -> FailfWithOffset(1, ...) error would be logged for "f").
-func FailfWithOffset(offset int, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	log("INFO", msg)
-	ginkgowrapper.Fail(nowStamp()+": "+msg, 1+offset)
 }
 
 func skipInternalf(caller int, format string, args ...interface{}) {
@@ -470,7 +452,7 @@ func ProxyMode(f *Framework) (string, error) {
 func SkipUnlessServerVersionGTE(v *utilversion.Version, c discovery.ServerVersionInterface) {
 	gte, err := ServerVersionGTE(v, c)
 	if err != nil {
-		Failf("Failed to get server version: %v", err)
+		e2elog.Failf("Failed to get server version: %v", err)
 	}
 	if !gte {
 		skipInternalf(1, "Not supported for server versions before %q", v)
@@ -486,7 +468,7 @@ func SkipIfMissingResource(dynamicClient dynamic.Interface, gvr schema.GroupVers
 		if apierrs.IsMethodNotSupported(err) || apierrs.IsNotFound(err) || apierrs.IsForbidden(err) {
 			skipInternalf(1, "Could not find %s resource, skipping test: %#v", gvr, err)
 		}
-		Failf("Unexpected error getting %v: %v", gvr, err)
+		e2elog.Failf("Unexpected error getting %v: %v", gvr, err)
 	}
 }
 
@@ -1294,7 +1276,7 @@ func ServiceResponding(c clientset.Interface, ns, name string) error {
 			Raw()
 		if err != nil {
 			if ctx.Err() != nil {
-				Failf("Failed to GET from service %s: %v", name, err)
+				e2elog.Failf("Failed to GET from service %s: %v", name, err)
 				return true, err
 			}
 			e2elog.Logf("Failed to GET from service %s: %v:", name, err)
@@ -1366,6 +1348,11 @@ func RandomSuffix() string {
 	return strconv.Itoa(r.Int() % 10000)
 }
 
+// ExpectEqual expects the specified two are the same, otherwise an exception raises
+func ExpectEqual(actual interface{}, extra interface{}, explain ...interface{}) {
+	gomega.Expect(actual).To(gomega.Equal(extra), explain...)
+}
+
 // ExpectError expects an error happens, otherwise an exception raises
 func ExpectError(err error, explain ...interface{}) {
 	gomega.Expect(err).To(gomega.HaveOccurred(), explain...)
@@ -1435,7 +1422,7 @@ func AssertCleanup(ns string, selectors ...string) {
 	}
 	err := wait.PollImmediate(500*time.Millisecond, 1*time.Minute, verifyCleanupFunc)
 	if err != nil {
-		Failf(e.Error())
+		e2elog.Failf(e.Error())
 	}
 }
 
@@ -1676,7 +1663,7 @@ func (f *Framework) testContainerOutputMatcher(scenarioName string,
 	matcher func(string, ...interface{}) gomegatypes.GomegaMatcher) {
 	ginkgo.By(fmt.Sprintf("Creating a pod to test %v", scenarioName))
 	if containerIndex < 0 || containerIndex >= len(pod.Spec.Containers) {
-		Failf("Invalid container index: %d", containerIndex)
+		e2elog.Failf("Invalid container index: %d", containerIndex)
 	}
 	ExpectNoError(f.MatchContainerOutput(pod, pod.Spec.Containers[containerIndex].Name, expectedOutput, matcher))
 }
@@ -1942,7 +1929,7 @@ func isNodeUntainted(node *v1.Node) bool {
 	nodeInfo.SetNode(node)
 	fit, _, err := predicates.PodToleratesNodeTaints(fakePod, nil, nodeInfo)
 	if err != nil {
-		Failf("Can't test predicates for node %s: %v", node.Name, err)
+		e2elog.Failf("Can't test predicates for node %s: %v", node.Name, err)
 		return false
 	}
 	return fit
@@ -2090,7 +2077,7 @@ func ExpectNodeHasLabel(c clientset.Interface, nodeName string, labelKey string,
 	ginkgo.By("verifying the node has the label " + labelKey + " " + labelValue)
 	node, err := c.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	ExpectNoError(err)
-	gomega.Expect(node.Labels[labelKey]).To(gomega.Equal(labelValue))
+	ExpectEqual(node.Labels[labelKey], labelValue)
 }
 
 // RemoveTaintOffNode removes the given taint from the given node.
@@ -2119,7 +2106,7 @@ func verifyThatTaintIsGone(c clientset.Interface, nodeName string, taint *v1.Tai
 	nodeUpdated, err := c.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	ExpectNoError(err)
 	if taintutils.TaintExists(nodeUpdated.Spec.Taints, taint) {
-		Failf("Failed removing taint " + taint.ToString() + " of the node " + nodeName)
+		e2elog.Failf("Failed removing taint " + taint.ToString() + " of the node " + nodeName)
 	}
 }
 
@@ -2128,7 +2115,7 @@ func ExpectNodeHasTaint(c clientset.Interface, nodeName string, taint *v1.Taint)
 	ginkgo.By("verifying the node has the taint " + taint.ToString())
 	if has, err := NodeHasTaint(c, nodeName, taint); !has {
 		ExpectNoError(err)
-		Failf("Failed to find taint %s on node %s", taint.ToString(), nodeName)
+		e2elog.Failf("Failed to find taint %s on node %s", taint.ToString(), nodeName)
 	}
 }
 
@@ -2226,94 +2213,11 @@ func ScaleResource(
 	return e2epod.WaitForControlledPodsRunning(clientset, ns, name, kind)
 }
 
-func getRuntimeObjectForKind(c clientset.Interface, kind schema.GroupKind, ns, name string) (runtime.Object, error) {
-	switch kind {
-	case api.Kind("ReplicationController"):
-		return c.CoreV1().ReplicationControllers(ns).Get(name, metav1.GetOptions{})
-	case extensionsinternal.Kind("ReplicaSet"), appsinternal.Kind("ReplicaSet"):
-		return c.AppsV1().ReplicaSets(ns).Get(name, metav1.GetOptions{})
-	case extensionsinternal.Kind("Deployment"), appsinternal.Kind("Deployment"):
-		return c.AppsV1().Deployments(ns).Get(name, metav1.GetOptions{})
-	case extensionsinternal.Kind("DaemonSet"):
-		return c.AppsV1().DaemonSets(ns).Get(name, metav1.GetOptions{})
-	case batchinternal.Kind("Job"):
-		return c.BatchV1().Jobs(ns).Get(name, metav1.GetOptions{})
-	default:
-		return nil, fmt.Errorf("Unsupported kind when getting runtime object: %v", kind)
-	}
-}
-
-func getSelectorFromRuntimeObject(obj runtime.Object) (labels.Selector, error) {
-	switch typed := obj.(type) {
-	case *v1.ReplicationController:
-		return labels.SelectorFromSet(typed.Spec.Selector), nil
-	case *extensionsv1beta1.ReplicaSet:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *appsv1.ReplicaSet:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *extensionsv1beta1.Deployment:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *appsv1.Deployment:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *extensionsv1beta1.DaemonSet:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *appsv1.DaemonSet:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	case *batchv1.Job:
-		return metav1.LabelSelectorAsSelector(typed.Spec.Selector)
-	default:
-		return nil, fmt.Errorf("Unsupported kind when getting selector: %v", obj)
-	}
-}
-
-func getReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
-	switch typed := obj.(type) {
-	case *v1.ReplicationController:
-		if typed.Spec.Replicas != nil {
-			return *typed.Spec.Replicas, nil
-		}
-		return 0, nil
-	case *extensionsv1beta1.ReplicaSet:
-		if typed.Spec.Replicas != nil {
-			return *typed.Spec.Replicas, nil
-		}
-		return 0, nil
-	case *appsv1.ReplicaSet:
-		if typed.Spec.Replicas != nil {
-			return *typed.Spec.Replicas, nil
-		}
-		return 0, nil
-	case *extensionsv1beta1.Deployment:
-		if typed.Spec.Replicas != nil {
-			return *typed.Spec.Replicas, nil
-		}
-		return 0, nil
-	case *appsv1.Deployment:
-		if typed.Spec.Replicas != nil {
-			return *typed.Spec.Replicas, nil
-		}
-		return 0, nil
-	case *extensionsv1beta1.DaemonSet:
-		return 0, nil
-	case *appsv1.DaemonSet:
-		return 0, nil
-	case *batchv1.Job:
-		// TODO: currently we use pause pods so that's OK. When we'll want to switch to Pods
-		// that actually finish we need a better way to do this.
-		if typed.Spec.Parallelism != nil {
-			return *typed.Spec.Parallelism, nil
-		}
-		return 0, nil
-	default:
-		return -1, fmt.Errorf("Unsupported kind when getting number of replicas: %v", obj)
-	}
-}
-
 // DeleteResourceAndWaitForGC deletes only given resource and waits for GC to delete the pods.
 func DeleteResourceAndWaitForGC(c clientset.Interface, kind schema.GroupKind, ns, name string) error {
 	ginkgo.By(fmt.Sprintf("deleting %v %s in namespace %s, will wait for the garbage collector to delete the pods", kind, name, ns))
 
-	rtObject, err := getRuntimeObjectForKind(c, kind, ns, name)
+	rtObject, err := e2eresource.GetRuntimeObjectForKind(c, kind, ns, name)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			e2elog.Logf("%v %s not found: %v", kind, name, err)
@@ -2321,11 +2225,11 @@ func DeleteResourceAndWaitForGC(c clientset.Interface, kind schema.GroupKind, ns
 		}
 		return err
 	}
-	selector, err := getSelectorFromRuntimeObject(rtObject)
+	selector, err := e2eresource.GetSelectorFromRuntimeObject(rtObject)
 	if err != nil {
 		return err
 	}
-	replicas, err := getReplicasFromRuntimeObject(rtObject)
+	replicas, err := e2eresource.GetReplicasFromRuntimeObject(rtObject)
 	if err != nil {
 		return err
 	}
@@ -2910,7 +2814,7 @@ func BlockNetwork(from string, to string) {
 	dropCmd := fmt.Sprintf("sudo iptables --insert %s", iptablesRule)
 	if result, err := e2essh.SSH(dropCmd, from, TestContext.Provider); result.Code != 0 || err != nil {
 		e2essh.LogResult(result)
-		Failf("Unexpected error: %v", err)
+		e2elog.Failf("Unexpected error: %v", err)
 	}
 }
 
@@ -2937,7 +2841,7 @@ func UnblockNetwork(from string, to string) {
 		return false, nil
 	})
 	if err != nil {
-		Failf("Failed to remove the iptable REJECT rule. Manual intervention is "+
+		e2elog.Failf("Failed to remove the iptable REJECT rule. Manual intervention is "+
 			"required on host %s: remove rule %s, if exists", from, iptablesRule)
 	}
 }
@@ -3131,7 +3035,7 @@ func WaitForStableCluster(c clientset.Interface, masterNodes sets.String) int {
 		scheduledPods, currentlyNotScheduledPods = e2epod.GetPodsScheduled(masterNodes, allPods)
 
 		if startTime.Add(timeout).Before(time.Now()) {
-			Failf("Timed out after %v waiting for stable cluster.", timeout)
+			e2elog.Failf("Timed out after %v waiting for stable cluster.", timeout)
 			break
 		}
 	}
@@ -3237,17 +3141,17 @@ func getMasterAddresses(c clientset.Interface) (string, string, string) {
 	// Populate the internal IP.
 	eps, err := c.CoreV1().Endpoints(metav1.NamespaceDefault).Get("kubernetes", metav1.GetOptions{})
 	if err != nil {
-		Failf("Failed to get kubernetes endpoints: %v", err)
+		e2elog.Failf("Failed to get kubernetes endpoints: %v", err)
 	}
 	if len(eps.Subsets) != 1 || len(eps.Subsets[0].Addresses) != 1 {
-		Failf("There are more than 1 endpoints for kubernetes service: %+v", eps)
+		e2elog.Failf("There are more than 1 endpoints for kubernetes service: %+v", eps)
 	}
 	internalIP = eps.Subsets[0].Addresses[0].IP
 
 	// Populate the external IP/hostname.
 	url, err := url.Parse(TestContext.Host)
 	if err != nil {
-		Failf("Failed to parse hostname: %v", err)
+		e2elog.Failf("Failed to parse hostname: %v", err)
 	}
 	if net.ParseIP(url.Host) != nil {
 		externalIP = url.Host
@@ -3277,7 +3181,7 @@ func GetAllMasterAddresses(c clientset.Interface) []string {
 	case "aws":
 		ips.Insert(awsMasterIP)
 	default:
-		Failf("This test is not supported for provider %s and should be disabled", TestContext.Provider)
+		e2elog.Failf("This test is not supported for provider %s and should be disabled", TestContext.Provider)
 	}
 	return ips.List()
 }

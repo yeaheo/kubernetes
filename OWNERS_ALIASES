@@ -137,7 +137,6 @@ aliases:
     - k82cn
     - resouer
     - ravisantoshgudimetla
-    - misterikkit
     - Huang-Wei
     - wgliang
 
@@ -227,6 +226,7 @@ aliases:
     - rramkumar1
     - cmluciano
     - m1093782566
+    - andrewsykim
   sig-apps-approvers:
     - kow3ns
     - janetkuo

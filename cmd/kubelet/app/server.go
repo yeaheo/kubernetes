@@ -372,6 +372,7 @@ func UnsecuredDependencies(s *options.KubeletServer) (*kubelet.Dependencies, err
 
 	mounter := mount.New(s.ExperimentalMounterPath)
 	subpather := subpath.New(mounter)
+	hu := mount.NewHostUtil()
 	var pluginRunner = exec.New()
 	if s.Containerized {
 		klog.V(2).Info("Running kubelet in containerized mode")
@@ -382,6 +383,7 @@ func UnsecuredDependencies(s *options.KubeletServer) (*kubelet.Dependencies, err
 		mounter = nsutil.NewMounter(s.RootDirectory, ne)
 		// NSenter only valid on Linux
 		subpather = subpath.NewNSEnter(mounter, ne, s.RootDirectory)
+		hu = nsutil.NewHostUtil(ne, s.RootDirectory)
 		// an exec interface which can use nsenter for flex plugin calls
 		pluginRunner, err = nsenter.NewNsenter(nsenter.DefaultHostRootFsPath, exec.New())
 		if err != nil {
@@ -407,6 +409,7 @@ func UnsecuredDependencies(s *options.KubeletServer) (*kubelet.Dependencies, err
 		KubeClient:          nil,
 		HeartbeatClient:     nil,
 		EventClient:         nil,
+		HostUtil:            hu,
 		Mounter:             mounter,
 		Subpather:           subpather,
 		OOMAdjuster:         oom.NewOOMAdjuster(),
@@ -625,17 +628,15 @@ func run(s *options.KubeletServer, kubeDeps *kubelet.Dependencies, stopCh <-chan
 	cgroupRoots = append(cgroupRoots, cm.NodeAllocatableRoot(s.CgroupRoot, s.CgroupDriver))
 	kubeletCgroup, err := cm.GetKubeletContainer(s.KubeletCgroups)
 	if err != nil {
-		return fmt.Errorf("failed to get the kubelet's cgroup: %v", err)
-	}
-	if kubeletCgroup != "" {
+		klog.Warningf("failed to get the kubelet's cgroup: %v.  Kubelet system container metrics may be missing.", err)
+	} else if kubeletCgroup != "" {
 		cgroupRoots = append(cgroupRoots, kubeletCgroup)
 	}
 
 	runtimeCgroup, err := cm.GetRuntimeContainer(s.ContainerRuntime, s.RuntimeCgroups)
 	if err != nil {
-		return fmt.Errorf("failed to get the container runtime's cgroup: %v", err)
-	}
-	if runtimeCgroup != "" {
+		klog.Warningf("failed to get the container runtime's cgroup: %v. Runtime system container metrics may be missing.", err)
+	} else if runtimeCgroup != "" {
 		// RuntimeCgroups is optional, so ignore if it isn't specified
 		cgroupRoots = append(cgroupRoots, runtimeCgroup)
 	}
