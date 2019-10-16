@@ -26,19 +26,17 @@ import (
 	"testing"
 	"text/template"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 )
 
 const (
-	envScriptFileName         = "kube-env"
-	configureHelperScriptName = "configure-helper.sh"
+	envScriptFileName = "kube-env"
 )
 
 type ManifestTestCase struct {
 	pod                 v1.Pod
-	envScriptPath       string
 	manifest            string
 	auxManifests        []string
 	kubeHome            string
@@ -64,7 +62,6 @@ func newManifestTestCase(t *testing.T, manifest, funcName string, auxManifests [
 	}
 
 	c.kubeHome = d
-	c.envScriptPath = filepath.Join(c.kubeHome, envScriptFileName)
 	c.manifestSources = filepath.Join(c.kubeHome, "kube-manifests", "kubernetes", "gci-trusty")
 
 	currentPath, err := os.Getwd()
@@ -109,7 +106,7 @@ func (c *ManifestTestCase) mustCreateManifestDstDir() {
 	}
 }
 
-func (c *ManifestTestCase) mustCreateEnv(envTemplate string, env interface{}) {
+func (c *ManifestTestCase) mustCreateEnv(envTemplate string, env interface{}) string {
 	f, err := os.Create(filepath.Join(c.kubeHome, envScriptFileName))
 	if err != nil {
 		c.t.Fatalf("Failed to create envScript: %v", err)
@@ -121,17 +118,19 @@ func (c *ManifestTestCase) mustCreateEnv(envTemplate string, env interface{}) {
 	if err = t.Execute(f, env); err != nil {
 		c.t.Fatalf("Failed to execute template: %v", err)
 	}
+
+	return f.Name()
 }
 
-func (c *ManifestTestCase) mustInvokeFunc(envTemplate string, env interface{}) {
-	c.mustCreateEnv(envTemplate, env)
-	args := fmt.Sprintf("source %s ; source %s; %s", c.envScriptPath, configureHelperScriptName, c.manifestFuncName)
+func (c *ManifestTestCase) mustInvokeFunc(envTemplate, scriptName string, env interface{}) {
+	envScriptPath := c.mustCreateEnv(envTemplate, env)
+	args := fmt.Sprintf("source %s ; source %s; %s", envScriptPath, scriptName, c.manifestFuncName)
 	cmd := exec.Command("bash", "-c", args)
 
 	bs, err := cmd.CombinedOutput()
 	if err != nil {
 		c.t.Logf("%s", bs)
-		c.t.Fatalf("Failed to run configure-helper.sh: %v", err)
+		c.t.Fatalf("Failed to run %s: %v", scriptName, err)
 	}
 	c.t.Logf("%s", string(bs))
 }

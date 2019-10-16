@@ -23,7 +23,6 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/pkg/scheduler/factory"
 
 	fakecache "k8s.io/kubernetes/pkg/scheduler/internal/cache/fake"
 )
@@ -106,7 +105,7 @@ func TestSkipPodUpdate(t *testing.T) {
 	}
 	for _, test := range table {
 		t.Run(test.name, func(t *testing.T) {
-			c := NewFromConfig(&factory.Config{
+			c := NewFromConfig(&Config{
 				SchedulerCache: &fakecache.Cache{
 					IsAssumedPodFunc: test.isAssumedPodFunc,
 					GetPodFunc:       test.getPodFunc,
@@ -227,14 +226,14 @@ func TestNodeConditionsChanged(t *testing.T) {
 		{
 			Name:          "no condition changed",
 			Changed:       false,
-			OldConditions: []v1.NodeCondition{{Type: v1.NodeOutOfDisk, Status: v1.ConditionTrue}},
-			NewConditions: []v1.NodeCondition{{Type: v1.NodeOutOfDisk, Status: v1.ConditionTrue}},
+			OldConditions: []v1.NodeCondition{{Type: v1.NodeDiskPressure, Status: v1.ConditionTrue}},
+			NewConditions: []v1.NodeCondition{{Type: v1.NodeDiskPressure, Status: v1.ConditionTrue}},
 		},
 		{
 			Name:          "only LastHeartbeatTime changed",
 			Changed:       false,
-			OldConditions: []v1.NodeCondition{{Type: v1.NodeOutOfDisk, Status: v1.ConditionTrue, LastHeartbeatTime: metav1.Unix(1, 0)}},
-			NewConditions: []v1.NodeCondition{{Type: v1.NodeOutOfDisk, Status: v1.ConditionTrue, LastHeartbeatTime: metav1.Unix(2, 0)}},
+			OldConditions: []v1.NodeCondition{{Type: v1.NodeDiskPressure, Status: v1.ConditionTrue, LastHeartbeatTime: metav1.Unix(1, 0)}},
+			NewConditions: []v1.NodeCondition{{Type: v1.NodeDiskPressure, Status: v1.ConditionTrue, LastHeartbeatTime: metav1.Unix(2, 0)}},
 		},
 		{
 			Name:          "new node has more healthy conditions",
@@ -245,7 +244,7 @@ func TestNodeConditionsChanged(t *testing.T) {
 		{
 			Name:          "new node has less unhealthy conditions",
 			Changed:       true,
-			OldConditions: []v1.NodeCondition{{Type: v1.NodeOutOfDisk, Status: v1.ConditionTrue}},
+			OldConditions: []v1.NodeCondition{{Type: v1.NodeDiskPressure, Status: v1.ConditionTrue}},
 			NewConditions: []v1.NodeCondition{},
 		},
 		{

@@ -29,11 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
-	"github.com/onsi/gomega"
-	imageutils "k8s.io/kubernetes/test/utils/image"
 )
 
 var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
@@ -115,7 +113,7 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 		options := metav1.ListOptions{LabelSelector: selector.String()}
 		pods, err := podClient.List(options)
 		framework.ExpectNoError(err, "failed to query for pod")
-		gomega.Expect(len(pods.Items)).To(gomega.Equal(0))
+		framework.ExpectEqual(len(pods.Items), 0)
 		options = metav1.ListOptions{
 			LabelSelector:   selector.String(),
 			ResourceVersion: pods.ListMeta.ResourceVersion,
@@ -131,16 +129,16 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 		options = metav1.ListOptions{LabelSelector: selector.String()}
 		pods, err = podClient.List(options)
 		framework.ExpectNoError(err, "failed to query for pod")
-		gomega.Expect(len(pods.Items)).To(gomega.Equal(1))
+		framework.ExpectEqual(len(pods.Items), 1)
 
 		ginkgo.By("verifying pod creation was observed")
 		select {
 		case event, _ := <-w.ResultChan():
 			if event.Type != watch.Added {
-				e2elog.Failf("Failed to observe pod creation: %v", event)
+				framework.Failf("Failed to observe pod creation: %v", event)
 			}
 		case <-time.After(framework.PodStartTimeout):
-			e2elog.Failf("Timeout while waiting for pod creation")
+			framework.Failf("Timeout while waiting for pod creation")
 		}
 
 		// We need to wait for the pod to be running, otherwise the deletion
@@ -154,15 +152,15 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 
 		// check the annotation is there
 		if _, ok := pod.Annotations["podpreset.admission.kubernetes.io/podpreset-hello"]; !ok {
-			e2elog.Failf("Annotation not found in pod annotations: \n%v\n", pod.Annotations)
+			framework.Failf("Annotation not found in pod annotations: \n%v\n", pod.Annotations)
 		}
 
 		// verify the env is the same
 		if !reflect.DeepEqual(pip.Spec.Env, pod.Spec.Containers[0].Env) {
-			e2elog.Failf("env of pod container does not match the env of the pip: expected %#v, got: %#v", pip.Spec.Env, pod.Spec.Containers[0].Env)
+			framework.Failf("env of pod container does not match the env of the pip: expected %#v, got: %#v", pip.Spec.Env, pod.Spec.Containers[0].Env)
 		}
 		if !reflect.DeepEqual(pip.Spec.Env, pod.Spec.InitContainers[0].Env) {
-			e2elog.Failf("env of pod init container does not match the env of the pip: expected %#v, got: %#v", pip.Spec.Env, pod.Spec.InitContainers[0].Env)
+			framework.Failf("env of pod init container does not match the env of the pip: expected %#v, got: %#v", pip.Spec.Env, pod.Spec.InitContainers[0].Env)
 		}
 	})
 
@@ -235,7 +233,7 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 		options := metav1.ListOptions{LabelSelector: selector.String()}
 		pods, err := podClient.List(options)
 		framework.ExpectNoError(err, "failed to query for pod")
-		gomega.Expect(len(pods.Items)).To(gomega.Equal(0))
+		framework.ExpectEqual(len(pods.Items), 0)
 		options = metav1.ListOptions{
 			LabelSelector:   selector.String(),
 			ResourceVersion: pods.ListMeta.ResourceVersion,
@@ -251,16 +249,16 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 		options = metav1.ListOptions{LabelSelector: selector.String()}
 		pods, err = podClient.List(options)
 		framework.ExpectNoError(err, "failed to query for pod")
-		gomega.Expect(len(pods.Items)).To(gomega.Equal(1))
+		framework.ExpectEqual(len(pods.Items), 1)
 
 		ginkgo.By("verifying pod creation was observed")
 		select {
 		case event, _ := <-w.ResultChan():
 			if event.Type != watch.Added {
-				e2elog.Failf("Failed to observe pod creation: %v", event)
+				framework.Failf("Failed to observe pod creation: %v", event)
 			}
 		case <-time.After(framework.PodStartTimeout):
-			e2elog.Failf("Timeout while waiting for pod creation")
+			framework.Failf("Timeout while waiting for pod creation")
 		}
 
 		// We need to wait for the pod to be running, otherwise the deletion
@@ -274,15 +272,15 @@ var _ = SIGDescribe("[Feature:PodPreset] PodPreset", func() {
 
 		// check the annotation is not there
 		if _, ok := pod.Annotations["podpreset.admission.kubernetes.io/podpreset-hello"]; ok {
-			e2elog.Failf("Annotation found in pod annotations and should not be: \n%v\n", pod.Annotations)
+			framework.Failf("Annotation found in pod annotations and should not be: \n%v\n", pod.Annotations)
 		}
 
 		// verify the env is the same
 		if !reflect.DeepEqual(originalPod.Spec.Containers[0].Env, pod.Spec.Containers[0].Env) {
-			e2elog.Failf("env of pod container does not match the env of the original pod: expected %#v, got: %#v", originalPod.Spec.Containers[0].Env, pod.Spec.Containers[0].Env)
+			framework.Failf("env of pod container does not match the env of the original pod: expected %#v, got: %#v", originalPod.Spec.Containers[0].Env, pod.Spec.Containers[0].Env)
 		}
 		if !reflect.DeepEqual(originalPod.Spec.InitContainers[0].Env, pod.Spec.InitContainers[0].Env) {
-			e2elog.Failf("env of pod init container does not match the env of the original pod: expected %#v, got: %#v", originalPod.Spec.InitContainers[0].Env, pod.Spec.InitContainers[0].Env)
+			framework.Failf("env of pod init container does not match the env of the original pod: expected %#v, got: %#v", originalPod.Spec.InitContainers[0].Env, pod.Spec.InitContainers[0].Env)
 		}
 
 	})

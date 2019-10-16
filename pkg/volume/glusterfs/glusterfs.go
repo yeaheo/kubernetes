@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,7 +30,7 @@ import (
 
 	gcli "github.com/heketi/heketi/client/api/go-client"
 	gapi "github.com/heketi/heketi/pkg/glusterfs/api"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,13 +89,15 @@ const (
 	// default values, but they play a different role and
 	// could take a different value. Only thing we need is:
 	// absGidMin <= defGidMin <= defGidMax <= absGidMax
-	absoluteGidMin          = 2000
-	absoluteGidMax          = math.MaxInt32
-	linuxGlusterMountBinary = "mount.glusterfs"
-	heketiAnn               = "heketi-dynamic-provisioner"
-	glusterTypeAnn          = "gluster.org/type"
-	glusterDescAnn          = "Gluster-Internal: Dynamically provisioned PV"
-	heketiVolIDAnn          = "gluster.kubernetes.io/heketi-volume-id"
+	absoluteGidMin = 2000
+	absoluteGidMax = math.MaxInt32
+	heketiAnn      = "heketi-dynamic-provisioner"
+	glusterTypeAnn = "gluster.org/type"
+	glusterDescAnn = "Gluster-Internal: Dynamically provisioned PV"
+	heketiVolIDAnn = "gluster.kubernetes.io/heketi-volume-id"
+
+	// Error string returned by heketi
+	errIDNotFound = "Id not found"
 )
 
 func (plugin *glusterfsPlugin) Init(host volume.VolumeHost) error {
@@ -371,18 +374,26 @@ func (b *glusterfsMounter) setUpAtInternal(dir string) error {
 		}
 	}
 
-	//Add backup-volfile-servers and auto_unmount options.
-	options = append(options, "backup-volfile-servers="+dstrings.Join(addrlist[:], ":"))
-	options = append(options, "auto_unmount")
-
-	mountOptions := volutil.JoinMountOptions(b.mountOptions, options)
-	// with `backup-volfile-servers` mount option in place, it is not required to
-	// iterate over all the servers in the addrlist. A mount attempt with this option
-	// will fetch all the servers mentioned in the backup-volfile-servers list.
-	// Refer to backup-volfile-servers @ http://docs.gluster.org/en/latest/Administrator%20Guide/Setting%20Up%20Clients/
-
 	if (len(addrlist) > 0) && (addrlist[0] != "") {
 		ip := addrlist[rand.Intn(len(addrlist))]
+
+		// Add backup-volfile-servers and auto_unmount options.
+		// When ip is also in backup-volfile-servers, there will be a warning:
+		// "gf_remember_backup_volfile_server] 0-glusterfs: failed to set volfile server: File exists".
+		addr.Delete(ip)
+		backups := addr.List()
+		// Avoid an invalid empty backup-volfile-servers option.
+		if len(backups) > 0 {
+			options = append(options, "backup-volfile-servers="+dstrings.Join(addrlist[:], ":"))
+		}
+		options = append(options, "auto_unmount")
+
+		mountOptions := volutil.JoinMountOptions(b.mountOptions, options)
+		// with `backup-volfile-servers` mount option in place, it is not required to
+		// iterate over all the servers in the addrlist. A mount attempt with this option
+		// will fetch all the servers mentioned in the backup-volfile-servers list.
+		// Refer to backup-volfile-servers @ http://docs.gluster.org/en/latest/Administrator%20Guide/Setting%20Up%20Clients/
+
 		errs = b.mounter.Mount(ip+":"+b.path, dir, "glusterfs", mountOptions)
 		if errs == nil {
 			klog.Infof("successfully mounted directory %s", dir)
@@ -660,8 +671,11 @@ func (d *glusterfsVolumeDeleter) Delete() error {
 	}
 	err = cli.VolumeDelete(volumeID)
 	if err != nil {
-		klog.Errorf("failed to delete volume %s: %v", volumeName, err)
-		return err
+		if dstrings.TrimSpace(err.Error()) != errIDNotFound {
+			klog.Errorf("failed to delete volume %s: %v", volumeName, err)
+			return fmt.Errorf("failed to delete volume %s: %v", volumeName, err)
+		}
+		klog.V(2).Infof("volume %s not present in heketi, ignoring", volumeName)
 	}
 	klog.V(2).Infof("volume %s deleted successfully", volumeName)
 
@@ -955,6 +969,11 @@ func getClusterNodes(cli *gcli.Client, cluster string) (dynamicHostIps []string,
 			return nil, fmt.Errorf("failed to get host ipaddress: %v", err)
 		}
 		ipaddr := dstrings.Join(nodeInfo.NodeAddRequest.Hostnames.Storage, "")
+		// IP validates if a string is a valid IP address.
+		ip := net.ParseIP(ipaddr)
+		if ip == nil {
+			return nil, fmt.Errorf("glusterfs server node ip address %s must be a valid IP address, (e.g. 10.9.8.7)", ipaddr)
+		}
 		dynamicHostIps = append(dynamicHostIps, ipaddr)
 	}
 	klog.V(3).Infof("host list :%v", dynamicHostIps)

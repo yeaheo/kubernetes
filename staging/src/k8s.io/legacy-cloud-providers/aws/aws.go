@@ -1,3 +1,5 @@
+// +build !providerless
+
 /*
 Copyright 2014 The Kubernetes Authors.
 
@@ -45,7 +47,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/kms"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"gopkg.in/gcfg.v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -53,12 +55,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
+	informercorev1 "k8s.io/client-go/informers/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/pkg/version"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/cloud-provider"
+	cloudprovider "k8s.io/cloud-provider"
 	nodehelpers "k8s.io/cloud-provider/node/helpers"
 	servicehelpers "k8s.io/cloud-provider/service/helpers"
 	cloudvolume "k8s.io/cloud-provider/volume"
@@ -231,12 +236,12 @@ const (
 	createTagFactor       = 2.0
 	createTagSteps        = 9
 
-	// encryptedCheck* is configuration of poll for created volume to check
-	// it has not been silently removed by AWS.
+	// volumeCreate* is configuration of exponential backoff for created volume.
 	// On a random AWS account (shared among several developers) it took 4s on
-	// average.
-	encryptedCheckInterval = 1 * time.Second
-	encryptedCheckTimeout  = 30 * time.Second
+	// average, 8s max.
+	volumeCreateInitialDelay  = 5 * time.Second
+	volumeCreateBackoffFactor = 1.2
+	volumeCreateBackoffSteps  = 10
 
 	// Number of node names that can be added to a filter. The AWS limit is 200
 	// but we are using a lower limit on purpose
@@ -509,8 +514,13 @@ type Cloud struct {
 
 	instanceCache instanceCache
 
-	clientBuilder    cloudprovider.ControllerClientBuilder
-	kubeClient       clientset.Interface
+	clientBuilder cloudprovider.ControllerClientBuilder
+	kubeClient    clientset.Interface
+
+	nodeInformer informercorev1.NodeInformer
+	// Extract the function out to make it easier to test
+	nodeInformerHasSynced cache.InformerSynced
+
 	eventBroadcaster record.EventBroadcaster
 	eventRecorder    record.EventRecorder
 
@@ -527,6 +537,11 @@ type Cloud struct {
 var _ Volumes = &Cloud{}
 
 // CloudConfig wraps the settings for the AWS cloud provider.
+// NOTE: Cloud config files should follow the same Kubernetes deprecation policy as
+// flags or CLIs. Config fields should not change behavior in incompatible ways and
+// should be deprecated for at least 2 release prior to removing.
+// See https://kubernetes.io/docs/reference/using-api/deprecation-policy/#deprecating-a-flag-or-cli
+// for more details.
 type CloudConfig struct {
 	Global struct {
 		// TODO: Is there any use for this?  We can get it from the instance metadata service
@@ -746,6 +761,14 @@ func (p *awsSDKProvider) getCrossRequestRetryDelay(regionName string) *CrossRequ
 		p.regionDelayers[regionName] = delayer
 	}
 	return delayer
+}
+
+// SetInformers implements InformerUser interface by setting up informer-fed caches for aws lib to
+// leverage Kubernetes API for caching
+func (c *Cloud) SetInformers(informerFactory informers.SharedInformerFactory) {
+	klog.Infof("Setting up informers for Cloud")
+	c.nodeInformer = informerFactory.Core().V1().Nodes()
+	c.nodeInformerHasSynced = c.nodeInformer.Informer().HasSynced
 }
 
 func (p *awsSDKProvider) Compute(regionName string) (EC2, error) {
@@ -1289,7 +1312,6 @@ func newAWSCloud(cfg CloudConfig, awsServices Services) (*Cloud, error) {
 			return nil, err
 		}
 	}
-
 	return awsCloud, nil
 }
 
@@ -1382,14 +1404,35 @@ func (c *Cloud) NodeAddresses(ctx context.Context, name types.NodeName) ([]v1.No
 			return nil, fmt.Errorf("error querying AWS metadata for %q: %q", "network/interfaces/macs", err)
 		}
 
+		// We want the IPs to end up in order by interface (in particular, we want eth0's
+		// IPs first), but macs isn't necessarily sorted in that order so we have to
+		// explicitly order by device-number (device-number == the "0" in "eth0").
+		macIPs := make(map[int]string)
 		for _, macID := range strings.Split(macs, "\n") {
 			if macID == "" {
 				continue
 			}
-			macPath := path.Join("network/interfaces/macs/", macID, "local-ipv4s")
-			internalIPs, err := c.metadata.GetMetadata(macPath)
+			numPath := path.Join("network/interfaces/macs/", macID, "device-number")
+			numStr, err := c.metadata.GetMetadata(numPath)
 			if err != nil {
-				return nil, fmt.Errorf("error querying AWS metadata for %q: %q", macPath, err)
+				return nil, fmt.Errorf("error querying AWS metadata for %q: %q", numPath, err)
+			}
+			num, err := strconv.Atoi(strings.TrimSpace(numStr))
+			if err != nil {
+				klog.Warningf("Bad device-number %q for interface %s\n", numStr, macID)
+				continue
+			}
+			ipPath := path.Join("network/interfaces/macs/", macID, "local-ipv4s")
+			macIPs[num], err = c.metadata.GetMetadata(ipPath)
+			if err != nil {
+				return nil, fmt.Errorf("error querying AWS metadata for %q: %q", ipPath, err)
+			}
+		}
+
+		for i := 0; i < len(macIPs); i++ {
+			internalIPs := macIPs[i]
+			if internalIPs == "" {
+				continue
 			}
 			for _, internalIP := range strings.Split(internalIPs, "\n") {
 				if internalIP == "" {
@@ -1818,6 +1861,7 @@ func (c *Cloud) getMountDevice(
 	assign bool) (assigned mountDevice, alreadyAttached bool, err error) {
 
 	deviceMappings := map[mountDevice]EBSVolumeID{}
+	volumeStatus := map[EBSVolumeID]string{} // for better logging of volume status
 	for _, blockDevice := range info.BlockDeviceMappings {
 		name := aws.StringValue(blockDevice.DeviceName)
 		if strings.HasPrefix(name, "/dev/sd") {
@@ -1829,6 +1873,10 @@ func (c *Cloud) getMountDevice(
 		if len(name) < 1 || len(name) > 2 {
 			klog.Warningf("Unexpected EBS DeviceName: %q", aws.StringValue(blockDevice.DeviceName))
 		}
+		if blockDevice.Ebs != nil && blockDevice.Ebs.VolumeId != nil {
+			volumeStatus[EBSVolumeID(*blockDevice.Ebs.VolumeId)] = aws.StringValue(blockDevice.Ebs.Status)
+		}
+
 		deviceMappings[mountDevice(name)] = EBSVolumeID(aws.StringValue(blockDevice.Ebs.VolumeId))
 	}
 
@@ -1846,7 +1894,15 @@ func (c *Cloud) getMountDevice(
 	for mountDevice, mappingVolumeID := range deviceMappings {
 		if volumeID == mappingVolumeID {
 			if assign {
-				klog.Warningf("Got assignment call for already-assigned volume: %s@%s", mountDevice, mappingVolumeID)
+				// DescribeInstances shows the volume as attached / detaching, while Kubernetes
+				// cloud provider thinks it's detached.
+				// This can happened when the volume has just been detached from the same node
+				// and AWS API returns stale data in this DescribeInstances ("eventual consistency").
+				// Fail the attachment and let A/D controller retry in a while, hoping that
+				// AWS API returns consistent result next time (i.e. the volume is detached).
+				status := volumeStatus[mappingVolumeID]
+				klog.Warningf("Got assignment call for already-assigned volume: %s@%s, volume status: %s", mountDevice, mappingVolumeID, status)
+				return mountDevice, false, fmt.Errorf("volume is still being detached from the node")
 			}
 			return mountDevice, true, nil
 		}
@@ -2182,13 +2238,13 @@ func wrapAttachError(err error, disk *awsDisk, instance string) error {
 					if disk.awsID != EBSVolumeID(aws.StringValue(a.VolumeId)) {
 						klog.Warningf("Expected to get attachment info of volume %q but instead got info of %q", disk.awsID, aws.StringValue(a.VolumeId))
 					} else if aws.StringValue(a.State) == "attached" {
-						return fmt.Errorf("Error attaching EBS volume %q to instance %q: %q. The volume is currently attached to instance %q", disk.awsID, instance, awsError, aws.StringValue(a.InstanceId))
+						return fmt.Errorf("error attaching EBS volume %q to instance %q: %q. The volume is currently attached to instance %q", disk.awsID, instance, awsError, aws.StringValue(a.InstanceId))
 					}
 				}
 			}
 		}
 	}
-	return fmt.Errorf("Error attaching EBS volume %q to instance %q: %q", disk.awsID, instance, err)
+	return fmt.Errorf("error attaching EBS volume %q to instance %q: %q", disk.awsID, instance, err)
 }
 
 // AttachDisk implements Volumes.AttachDisk
@@ -2448,8 +2504,13 @@ func (c *Cloud) waitUntilVolumeAvailable(volumeName KubernetesVolumeID) error {
 		// Unreachable code
 		return err
 	}
-
-	err = wait.Poll(encryptedCheckInterval, encryptedCheckTimeout, func() (done bool, err error) {
+	time.Sleep(5 * time.Second)
+	backoff := wait.Backoff{
+		Duration: volumeCreateInitialDelay,
+		Factor:   volumeCreateBackoffFactor,
+		Steps:    volumeCreateBackoffSteps,
+	}
+	err = wait.ExponentialBackoff(backoff, func() (done bool, err error) {
 		vol, err := disk.describeVolume()
 		if err != nil {
 			return true, err
@@ -2775,7 +2836,7 @@ func (c *Cloud) describeLoadBalancerv2(name string) (*elbv2.LoadBalancer, error)
 				return nil, nil
 			}
 		}
-		return nil, fmt.Errorf("Error describing load balancer: %q", err)
+		return nil, fmt.Errorf("error describing load balancer: %q", err)
 	}
 
 	// AWS will not return 2 load balancers with the same name _and_ type.
@@ -2792,7 +2853,7 @@ func (c *Cloud) describeLoadBalancerv2(name string) (*elbv2.LoadBalancer, error)
 func (c *Cloud) findVPCID() (string, error) {
 	macs, err := c.metadata.GetMetadata("network/interfaces/macs/")
 	if err != nil {
-		return "", fmt.Errorf("Could not list interfaces of the instance: %q", err)
+		return "", fmt.Errorf("could not list interfaces of the instance: %q", err)
 	}
 
 	// loop over interfaces, first vpc id returned wins
@@ -2807,7 +2868,7 @@ func (c *Cloud) findVPCID() (string, error) {
 		}
 		return vpcID, nil
 	}
-	return "", fmt.Errorf("Could not find VPC ID in instance metadata")
+	return "", fmt.Errorf("could not find VPC ID in instance metadata")
 }
 
 // Retrieves the specified security group from the AWS API, or returns nil if not found
@@ -3352,7 +3413,7 @@ func isSubnetPublic(rt []*ec2.RouteTable, subnetID string) (bool, error) {
 	}
 
 	if subnetTable == nil {
-		return false, fmt.Errorf("Could not locate routing table for subnet %s", subnetID)
+		return false, fmt.Errorf("could not locate routing table for subnet %s", subnetID)
 	}
 
 	for _, route := range subnetTable.Routes {
@@ -4032,7 +4093,7 @@ func (c *Cloud) updateInstanceSecurityGroupsForLoadBalancer(lb *elb.LoadBalancer
 		loadBalancerSecurityGroupID = *securityGroup
 	}
 	if loadBalancerSecurityGroupID == "" {
-		return fmt.Errorf("Could not determine security group for load balancer: %s", aws.StringValue(lb.LoadBalancerName))
+		return fmt.Errorf("could not determine security group for load balancer: %s", aws.StringValue(lb.LoadBalancerName))
 	}
 
 	// Get the actual list of groups that allow ingress from the load-balancer
@@ -4174,14 +4235,14 @@ func (c *Cloud) EnsureLoadBalancerDeleted(ctx context.Context, clusterName strin
 				&elbv2.DescribeTargetGroupsInput{LoadBalancerArn: lb.LoadBalancerArn},
 			)
 			if err != nil {
-				return fmt.Errorf("Error listing target groups before deleting load balancer: %q", err)
+				return fmt.Errorf("error listing target groups before deleting load balancer: %q", err)
 			}
 
 			_, err = c.elbv2.DeleteLoadBalancer(
 				&elbv2.DeleteLoadBalancerInput{LoadBalancerArn: lb.LoadBalancerArn},
 			)
 			if err != nil {
-				return fmt.Errorf("Error deleting load balancer %q: %v", loadBalancerName, err)
+				return fmt.Errorf("error deleting load balancer %q: %v", loadBalancerName, err)
 			}
 
 			for _, group := range targetGroups.TargetGroups {
@@ -4189,7 +4250,7 @@ func (c *Cloud) EnsureLoadBalancerDeleted(ctx context.Context, clusterName strin
 					&elbv2.DeleteTargetGroupInput{TargetGroupArn: group.TargetGroupArn},
 				)
 				if err != nil {
-					return fmt.Errorf("Error deleting target groups after deleting load balancer: %q", err)
+					return fmt.Errorf("error deleting target groups after deleting load balancer: %q", err)
 				}
 			}
 		}
@@ -4515,7 +4576,18 @@ func (c *Cloud) findInstanceByNodeName(nodeName types.NodeName) (*ec2.Instance, 
 // Returns the instance with the specified node name
 // Like findInstanceByNodeName, but returns error if node not found
 func (c *Cloud) getInstanceByNodeName(nodeName types.NodeName) (*ec2.Instance, error) {
-	instance, err := c.findInstanceByNodeName(nodeName)
+	var instance *ec2.Instance
+
+	// we leverage node cache to try to retrieve node's provider id first, as
+	// get instance by provider id is way more efficient than by filters in
+	// aws context
+	awsID, err := c.nodeNameToProviderID(nodeName)
+	if err != nil {
+		klog.V(3).Infof("Unable to convert node name %q to aws instanceID, fall back to findInstanceByNodeName: %v", nodeName, err)
+		instance, err = c.findInstanceByNodeName(nodeName)
+	} else {
+		instance, err = c.getInstanceByID(string(awsID))
+	}
 	if err == nil && instance == nil {
 		return nil, cloudprovider.InstanceNotFound
 	}
@@ -4533,6 +4605,26 @@ func (c *Cloud) getFullInstance(nodeName types.NodeName) (*awsInstance, *ec2.Ins
 	}
 	awsInstance := newAWSInstance(c.ec2, instance)
 	return awsInstance, instance, err
+}
+
+func (c *Cloud) nodeNameToProviderID(nodeName types.NodeName) (InstanceID, error) {
+	if len(nodeName) == 0 {
+		return "", fmt.Errorf("no nodeName provided")
+	}
+
+	if c.nodeInformerHasSynced == nil || !c.nodeInformerHasSynced() {
+		return "", fmt.Errorf("node informer has not synced yet")
+	}
+
+	node, err := c.nodeInformer.Lister().Get(string(nodeName))
+	if err != nil {
+		return "", err
+	}
+	if len(node.Spec.ProviderID) == 0 {
+		return "", fmt.Errorf("node has no providerID")
+	}
+
+	return KubernetesInstanceID(node.Spec.ProviderID).MapToAWSInstanceID()
 }
 
 func setNodeDisk(

@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/kubernetes/pkg/kubelet/images"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
@@ -112,13 +111,15 @@ while true; do sleep 1; done
 					gomega.Eventually(terminateContainer.GetPhase, ContainerStatusRetryTimeout, ContainerStatusPollInterval).Should(gomega.Equal(testCase.Phase))
 
 					ginkgo.By(fmt.Sprintf("Container '%s': should get the expected 'Ready' condition", testContainer.Name))
-					gomega.Expect(terminateContainer.IsReady()).Should(gomega.Equal(testCase.Ready))
+					isReady, err := terminateContainer.IsReady()
+					framework.ExpectEqual(isReady, testCase.Ready)
+					framework.ExpectNoError(err)
 
 					status, err := terminateContainer.GetStatus()
 					framework.ExpectNoError(err)
 
 					ginkgo.By(fmt.Sprintf("Container '%s': should get the expected 'State'", testContainer.Name))
-					gomega.Expect(GetContainerState(status.State)).To(gomega.Equal(testCase.State))
+					framework.ExpectEqual(GetContainerState(status.State), testCase.State)
 
 					ginkgo.By(fmt.Sprintf("Container '%s': should be possible to delete [NodeConformance]", testContainer.Name))
 					gomega.Expect(terminateContainer.Delete()).To(gomega.Succeed())
@@ -152,10 +153,10 @@ while true; do sleep 1; done
 				framework.ExpectNoError(err)
 
 				ginkgo.By("the container should be terminated")
-				gomega.Expect(GetContainerState(status.State)).To(gomega.Equal(ContainerStateTerminated))
+				framework.ExpectEqual(GetContainerState(status.State), ContainerStateTerminated)
 
 				ginkgo.By("the termination message should be set")
-				e2elog.Logf("Expected: %v to match Container's Termination Message: %v --", expectedMsg, status.State.Terminated.Message)
+				framework.Logf("Expected: %v to match Container's Termination Message: %v --", expectedMsg, status.State.Terminated.Message)
 				gomega.Expect(status.State.Terminated.Message).Should(expectedMsg)
 
 				ginkgo.By("delete the container")
@@ -346,9 +347,9 @@ while true; do sleep 1; done
 						break
 					}
 					if i < flakeRetry {
-						e2elog.Logf("No.%d attempt failed: %v, retrying...", i, err)
+						framework.Logf("No.%d attempt failed: %v, retrying...", i, err)
 					} else {
-						e2elog.Failf("All %d attempts failed: %v", flakeRetry, err)
+						framework.Failf("All %d attempts failed: %v", flakeRetry, err)
 					}
 				}
 			}

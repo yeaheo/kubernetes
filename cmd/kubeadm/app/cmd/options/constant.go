@@ -38,6 +38,9 @@ const (
 	// ControllerManagerExtraArgs flag sets extra flags to pass to the Controller Manager or override default ones in form of <flagname>=<value>.
 	ControllerManagerExtraArgs = "controller-manager-extra-args"
 
+	// ControlPlaneEndpoint flag sets a stable IP address or DNS name for the control plane.
+	ControlPlaneEndpoint = "control-plane-endpoint"
+
 	// DryRun flag instruct kubeadm to don't apply any changes; just output what would be done.
 	DryRun = "dry-run"
 
@@ -139,4 +142,7 @@ const (
 
 	// EtcdUpgrade flag instruct kubeadm to execute etcd upgrade during upgrades
 	EtcdUpgrade = "etcd-upgrade"
+
+	// Kustomize flag sets the folder where kustomize patches for static pod manifest are stored
+	Kustomize = "experimental-kustomize"
 )

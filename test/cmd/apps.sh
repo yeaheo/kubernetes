@@ -359,7 +359,7 @@ run_deployment_tests() {
   kubectl set image deployment nginx-deployment "*=${IMAGE_DEPLOYMENT_R1}" "${kube_flags[@]:?}"
   kube::test::get_object_assert deployment "{{range.items}}{{${image_field0:?}}}:{{end}}" "${IMAGE_DEPLOYMENT_R1}:"
   kube::test::get_object_assert deployment "{{range.items}}{{${image_field1:?}}}:{{end}}" "${IMAGE_DEPLOYMENT_R1}:"
-  # Set image of all containners of the deployment again when image not change
+  # Set image of all containers of the deployment again when image not change
   kubectl set image deployment nginx-deployment "*=${IMAGE_DEPLOYMENT_R1}" "${kube_flags[@]:?}"
   kube::test::get_object_assert deployment "{{range.items}}{{${image_field0:?}}}:{{end}}" "${IMAGE_DEPLOYMENT_R1}:"
   kube::test::get_object_assert deployment "{{range.items}}{{${image_field1:?}}}:{{end}}" "${IMAGE_DEPLOYMENT_R1}:"
@@ -640,7 +640,7 @@ run_rs_tests() {
   # Post-condition: no replica set exists
   kube::test::get_object_assert rs "{{range.items}}{{${id_field:?}}}:{{end}}" ''
 
-  if kube::test::if_supports_resource "${horizontalpodautoscalers:?}" ; then
+  if kube::test::if_supports_resource "horizontalpodautoscalers" ; then
     ### Auto scale replica set
     # Pre-condition: no replica set exists
     kube::test::get_object_assert rs "{{range.items}}{{${id_field:?}}}:{{end}}" ''

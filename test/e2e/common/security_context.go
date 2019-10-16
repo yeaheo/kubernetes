@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/pointer"
@@ -120,7 +119,9 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			}
 		}
 
-		ginkgo.It("should run with an explicit non-root user ID", func() {
+		ginkgo.It("should run with an explicit non-root user ID [LinuxOnly]", func() {
+			// creates a pod with RunAsUser, which is not supported on Windows.
+			framework.SkipIfNodeOSDistroIs("windows")
 			name := "explicit-nonroot-uid"
 			pod := makeNonRootPod(name, rootImage, pointer.Int64Ptr(1234))
 			pod = podClient.Create(pod)
@@ -128,7 +129,9 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			podClient.WaitForSuccess(name, framework.PodStartTimeout)
 			framework.ExpectNoError(podClient.MatchContainerOutput(name, name, "1234"))
 		})
-		ginkgo.It("should not run with an explicit root user ID", func() {
+		ginkgo.It("should not run with an explicit root user ID [LinuxOnly]", func() {
+			// creates a pod with RunAsUser, which is not supported on Windows.
+			framework.SkipIfNodeOSDistroIs("windows")
 			name := "explicit-root-uid"
 			pod := makeNonRootPod(name, nonRootImage, pointer.Int64Ptr(0))
 			pod = podClient.Create(pod)
@@ -136,7 +139,7 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			ev, err := podClient.WaitForErrorEventOrSuccess(pod)
 			framework.ExpectNoError(err)
 			gomega.Expect(ev).NotTo(gomega.BeNil())
-			gomega.Expect(ev.Reason).To(gomega.Equal(events.FailedToCreateContainer))
+			framework.ExpectEqual(ev.Reason, events.FailedToCreateContainer)
 		})
 		ginkgo.It("should run with an image specified user ID", func() {
 			name := "implicit-nonroot-uid"
@@ -154,7 +157,7 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			ev, err := podClient.WaitForErrorEventOrSuccess(pod)
 			framework.ExpectNoError(err)
 			gomega.Expect(ev).NotTo(gomega.BeNil())
-			gomega.Expect(ev.Reason).To(gomega.Equal(events.FailedToCreateContainer))
+			framework.ExpectEqual(ev.Reason, events.FailedToCreateContainer)
 		})
 	})
 
@@ -260,12 +263,25 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			podName := createAndWaitUserPod(false)
 			logs, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, podName, podName)
 			if err != nil {
-				e2elog.Failf("GetPodLogs for pod %q failed: %v", podName, err)
+				framework.Failf("GetPodLogs for pod %q failed: %v", podName, err)
 			}
 
-			e2elog.Logf("Got logs for pod %q: %q", podName, logs)
+			framework.Logf("Got logs for pod %q: %q", podName, logs)
 			if !strings.Contains(logs, "Operation not permitted") {
-				e2elog.Failf("unprivileged container shouldn't be able to create dummy device")
+				framework.Failf("unprivileged container shouldn't be able to create dummy device")
+			}
+		})
+
+		ginkgo.It("should run the container as privileged when true [LinuxOnly] [NodeFeature:HostAccess]", func() {
+			podName := createAndWaitUserPod(true)
+			logs, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, podName, podName)
+			if err != nil {
+				framework.Failf("GetPodLogs for pod %q failed: %v", podName, err)
+			}
+
+			framework.Logf("Got logs for pod %q: %q", podName, logs)
+			if strings.Contains(logs, "Operation not permitted") {
+				framework.Failf("privileged container should be able to create dummy device")
 			}
 		})
 	})
@@ -312,7 +328,7 @@ var _ = framework.KubeDescribe("Security Context", func() {
 		ginkgo.It("should allow privilege escalation when not explicitly set and uid != 0 [LinuxOnly] [NodeConformance]", func() {
 			podName := "alpine-nnp-nil-" + string(uuid.NewUUID())
 			if err := createAndMatchOutput(podName, "Effective uid: 0", nil, 1000); err != nil {
-				e2elog.Failf("Match output for pod %q failed: %v", podName, err)
+				framework.Failf("Match output for pod %q failed: %v", podName, err)
 			}
 		})
 
@@ -328,7 +344,7 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			podName := "alpine-nnp-false-" + string(uuid.NewUUID())
 			apeFalse := false
 			if err := createAndMatchOutput(podName, "Effective uid: 1000", &apeFalse, 1000); err != nil {
-				e2elog.Failf("Match output for pod %q failed: %v", podName, err)
+				framework.Failf("Match output for pod %q failed: %v", podName, err)
 			}
 		})
 
@@ -345,7 +361,7 @@ var _ = framework.KubeDescribe("Security Context", func() {
 			podName := "alpine-nnp-true-" + string(uuid.NewUUID())
 			apeTrue := true
 			if err := createAndMatchOutput(podName, "Effective uid: 0", &apeTrue, 1000); err != nil {
-				e2elog.Failf("Match output for pod %q failed: %v", podName, err)
+				framework.Failf("Match output for pod %q failed: %v", podName, err)
 			}
 		})
 	})

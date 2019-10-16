@@ -20,7 +20,6 @@ aliases:
     - jianhuiz
     - lavalamp
     - liggitt
-    - mbohlool
     - mikedanese
     - sttts
     - wojtek-t
@@ -30,16 +29,13 @@ aliases:
     - liggitt
     - mikedanese
   sig-auth-authorizers-reviewers:
-    - david-mcmahon
     - deads2k
     - dims
     - enj
     - erictune
     - jianhuiz
-    - krousey
     - lavalamp
     - liggitt
-    - mbohlool
     - mikedanese
     - mml
     - ncdc
@@ -56,16 +52,13 @@ aliases:
   sig-auth-certificates-reviewers:
     - awly
     - caesarxuchao
-    - david-mcmahon
     - deads2k
     - dims
     - enj
     - errordeveloper
-    - hongchaodeng
     - jianhuiz
     - lavalamp
     - liggitt
-    - mbohlool
     - mikedanese
     - smarterclayton
     - sttts
@@ -81,7 +74,6 @@ aliases:
     - immutableT
     - lavalamp
     - liggitt
-    - sakshamsharma
     - smarterclayton
     - wojtek-t
 
@@ -102,11 +94,9 @@ aliases:
     - tallclair
   sig-auth-policy-reviewers:
     - deads2k
-    - hongchaodeng
     - jianhuiz
     - liggitt
     - mbohlool
-    - pweil-
     - tallclair
     - krmayankk
 
@@ -122,6 +112,23 @@ aliases:
     - mikedanese
     - WanLinghao
 
+  # SIG Release
+  sig-release-approvers:
+    - calebamiles # SIG Chair
+    - justaugustus # SIG Chair
+    - tpepper # SIG Chair
+  release-engineering-approvers:
+    - calebamiles # SIG Chair
+    - justaugustus # SIG Chair
+    - tpepper # SIG Chair / Patch Release Team
+  release-engineering-reviewers:
+    - aleksandra-malinowska # Patch Release Team
+    - calebamiles # SIG Chair
+    - feiskyer # Patch Release Team
+    - hoegaarden # Patch Release Team
+    - justaugustus # SIG Chair
+    - tpepper # SIG Chair / Patch Release Team
+
   sig-storage-reviewers:
     - saad-ali
     - childsb
@@ -132,6 +139,7 @@ aliases:
     - wojtek-t
     - ravisantoshgudimetla
     - Huang-Wei
+    - ahg-g
   sig-scheduling:
     - bsalamat
     - k82cn
@@ -139,6 +147,10 @@ aliases:
     - ravisantoshgudimetla
     - Huang-Wei
     - wgliang
+    - ahg-g
+    - draveness
+    - hex108
+    - alculquicondor
 
   sig-cli-maintainers:
     - adohe
@@ -183,6 +195,13 @@ aliases:
     - krzyzacy
     - ixdy
     - spiffxp
+  sig-node-approvers:
+    - Random-Liu
+    - dchen1107
+    - derekwaynecarr
+    - tallclair
+    - vishh
+    - yujuhong
   sig-node-reviewers:
     - Random-Liu
     - dashpole
@@ -201,6 +220,7 @@ aliases:
     - yifan-gu
     - yujuhong
     - krmayankk
+    - mattjmcnaughton
   sig-network-approvers:
     - bowei
     - caseydavenport
@@ -250,6 +270,21 @@ aliases:
     - bskiba
     - MaciekPytel
     - mwielgus
+  sig-instrumentation-approvers:
+    - piosz
+    - brancz
+  sig-instrumentation-reviewers:
+    - kawych
+    - s-urbaniak
+    - DirectXMan12
+    - x13n
+    - loburm
+    - huangyuqi
+    - andyxning
+    - coffeepac
+    - monotek
+    - logicalhan
+    - RainbowMango
 
   api-approvers:
     - erictune
@@ -341,7 +376,6 @@ aliases:
     - janetkuo
     - justinsb
     - pwittrock
-    - roberthbailey
     - ncdc
     - tallclair
     - yifan-gu
@@ -351,7 +385,6 @@ aliases:
     - soltysh
     - piosz
     - jsafrane
-    - jbeda
 
   # api-reviewers targeted by sig area
   # see https://git.k8s.io/community/sig-architecture/api-review-process.md#training-reviews
@@ -439,7 +472,7 @@ aliases:
     - prydonius       # Apps
     - pwittrock       # CLI
     - quinton-hoole   # Multicluster
-    - roberthbailey   # Cluster Lifecycle
+    - justinsb        # Cluster Lifecycle
     - saad-ali        # Storage
     - seans3          # CLI
     - soltysh         # CLI

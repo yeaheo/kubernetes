@@ -26,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
@@ -54,7 +53,9 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		doConfigMapE2EWithoutMappings(f, 0, 0, &defaultMode)
 	})
 
-	ginkgo.It("should be consumable from pods in volume as non-root with defaultMode and fsGroup set [NodeFeature:FSGroup]", func() {
+	ginkgo.It("should be consumable from pods in volume as non-root with defaultMode and fsGroup set [LinuxOnly] [NodeFeature:FSGroup]", func() {
+		// Windows does not support RunAsUser / FSGroup SecurityContext options, and it does not support setting file permissions.
+		framework.SkipIfNodeOSDistroIs("windows")
 		defaultMode := int32(0440) /* setting fsGroup sets mode to at least 440 */
 		doConfigMapE2EWithoutMappings(f, 1000, 1001, &defaultMode)
 	})
@@ -69,7 +70,9 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		doConfigMapE2EWithoutMappings(f, 1000, 0, nil)
 	})
 
-	ginkgo.It("should be consumable from pods in volume as non-root with FSGroup [NodeFeature:FSGroup]", func() {
+	ginkgo.It("should be consumable from pods in volume as non-root with FSGroup [LinuxOnly] [NodeFeature:FSGroup]", func() {
+		// Windows does not support RunAsUser / FSGroup SecurityContext options.
+		framework.SkipIfNodeOSDistroIs("windows")
 		doConfigMapE2EWithoutMappings(f, 1000, 1001, nil)
 	})
 
@@ -103,7 +106,9 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		doConfigMapE2EWithMappings(f, 1000, 0, nil)
 	})
 
-	ginkgo.It("should be consumable from pods in volume with mappings as non-root with FSGroup [NodeFeature:FSGroup]", func() {
+	ginkgo.It("should be consumable from pods in volume with mappings as non-root with FSGroup [LinuxOnly] [NodeFeature:FSGroup]", func() {
+		// Windows does not support RunAsUser / FSGroup SecurityContext options.
+		framework.SkipIfNodeOSDistroIs("windows")
 		doConfigMapE2EWithMappings(f, 1000, 1001, nil)
 	})
 
@@ -134,7 +139,7 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", configMap.Name))
 		var err error
 		if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 		}
 
 		pod := &v1.Pod{
@@ -221,7 +226,7 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", configMap.Name))
 		var err error
 		if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 		}
 
 		pod := &v1.Pod{
@@ -339,12 +344,12 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", deleteConfigMap.Name))
 		var err error
 		if deleteConfigMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(deleteConfigMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", deleteConfigMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", deleteConfigMap.Name, err)
 		}
 
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", updateConfigMap.Name))
 		if updateConfigMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(updateConfigMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", updateConfigMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", updateConfigMap.Name, err)
 		}
 
 		pod := &v1.Pod{
@@ -459,7 +464,7 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", createConfigMap.Name))
 		if createConfigMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(createConfigMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", createConfigMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", createConfigMap.Name, err)
 		}
 
 		ginkgo.By("waiting to observe update in volume")
@@ -487,7 +492,7 @@ var _ = ginkgo.Describe("[sig-storage] ConfigMap", func() {
 		ginkgo.By(fmt.Sprintf("Creating configMap with name %s", configMap.Name))
 		var err error
 		if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-			e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+			framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 		}
 
 		pod := &v1.Pod{
@@ -595,7 +600,7 @@ func doConfigMapE2EWithoutMappings(f *framework.Framework, uid, fsGroup int64, d
 	ginkgo.By(fmt.Sprintf("Creating configMap with name %s", configMap.Name))
 	var err error
 	if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-		e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+		framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 	}
 
 	one := int64(1)
@@ -672,7 +677,7 @@ func doConfigMapE2EWithMappings(f *framework.Framework, uid, fsGroup int64, item
 
 	var err error
 	if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-		e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+		framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 	}
 
 	one := int64(1)
@@ -807,7 +812,7 @@ func createNonOptionalConfigMapPodWithConfig(f *framework.Framework, volumeMount
 	ginkgo.By(fmt.Sprintf("Creating configMap with name %s", configMap.Name))
 	var err error
 	if configMap, err = f.ClientSet.CoreV1().ConfigMaps(f.Namespace.Name).Create(configMap); err != nil {
-		e2elog.Failf("unable to create test configMap %s: %v", configMap.Name, err)
+		framework.Failf("unable to create test configMap %s: %v", configMap.Name, err)
 	}
 	//creating a pod with configMap object, but with different key which is not present in configMap object.
 	pod := &v1.Pod{

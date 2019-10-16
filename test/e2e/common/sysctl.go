@@ -29,7 +29,13 @@ import (
 	"github.com/onsi/gomega"
 )
 
-var _ = framework.KubeDescribe("Sysctls [NodeFeature:Sysctls]", func() {
+var _ = framework.KubeDescribe("Sysctls [LinuxOnly] [NodeFeature:Sysctls]", func() {
+
+	ginkgo.BeforeEach(func() {
+		// sysctl is not supported on Windows.
+		framework.SkipIfNodeOSDistroIs("windows")
+	})
+
 	f := framework.NewDefaultFramework("sysctl")
 	var podClient *framework.PodClient
 
@@ -91,7 +97,7 @@ var _ = framework.KubeDescribe("Sysctls [NodeFeature:Sysctls]", func() {
 		framework.ExpectNoError(err)
 
 		ginkgo.By("Checking that the pod succeeded")
-		gomega.Expect(pod.Status.Phase).To(gomega.Equal(v1.PodSucceeded))
+		framework.ExpectEqual(pod.Status.Phase, v1.PodSucceeded)
 
 		ginkgo.By("Getting logs from the pod")
 		log, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, pod.Name, pod.Spec.Containers[0].Name)
@@ -134,7 +140,7 @@ var _ = framework.KubeDescribe("Sysctls [NodeFeature:Sysctls]", func() {
 		framework.ExpectNoError(err)
 
 		ginkgo.By("Checking that the pod succeeded")
-		gomega.Expect(pod.Status.Phase).To(gomega.Equal(v1.PodSucceeded))
+		framework.ExpectEqual(pod.Status.Phase, v1.PodSucceeded)
 
 		ginkgo.By("Getting logs from the pod")
 		log, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, pod.Name, pod.Spec.Containers[0].Name)
@@ -205,6 +211,6 @@ var _ = framework.KubeDescribe("Sysctls [NodeFeature:Sysctls]", func() {
 
 		ginkgo.By("Checking that the pod was rejected")
 		gomega.Expect(ev).ToNot(gomega.BeNil())
-		gomega.Expect(ev.Reason).To(gomega.Equal("SysctlForbidden"))
+		framework.ExpectEqual(ev.Reason, "SysctlForbidden")
 	})
 })

@@ -6,6 +6,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "apiserver_manifest_test.go",
+        "audit_policy_test.go",
         "configure_helper_test.go",
     ],
     data = [
@@ -14,8 +15,17 @@ go_test(
     ],
     deps = [
         "//pkg/api/legacyscheme:go_default_library",
+        "//pkg/serviceaccount:go_default_library",
         "//staging/src/k8s.io/api/core/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/apis/audit:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/apis/audit/install:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/audit:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/audit/policy:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/authentication/user:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/authorization/authorizer:go_default_library",
+        "//vendor/github.com/stretchr/testify/assert:go_default_library",
+        "//vendor/github.com/stretchr/testify/require:go_default_library",
     ],
 )
 
@@ -40,6 +50,7 @@ pkg_tar(
         "//cluster/gce/gci/mounter": "gci-mounter",
         "configure-helper.sh": "gci-configure-helper.sh",
         "health-monitor.sh": "health-monitor.sh",
+        "configure-kubeapiserver.sh": "configure-kubeapiserver.sh",
     },
     mode = "0755",
     strip_prefix = ".",
@@ -67,5 +78,6 @@ filegroup(
     name = "scripts-test-data",
     srcs = [
         "configure-helper.sh",
+        "configure-kubeapiserver.sh",
     ],
 )

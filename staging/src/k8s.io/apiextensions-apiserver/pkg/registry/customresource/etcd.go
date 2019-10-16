@@ -297,17 +297,17 @@ func (r *ScaleREST) Update(ctx context.Context, name string, objInfo rest.Update
 }
 
 func toScaleCreateValidation(f rest.ValidateObjectFunc, specReplicasPath, statusReplicasPath, labelSelectorPath string) rest.ValidateObjectFunc {
-	return func(obj runtime.Object) error {
+	return func(ctx context.Context, obj runtime.Object) error {
 		scale, _, err := scaleFromCustomResource(obj.(*unstructured.Unstructured), specReplicasPath, statusReplicasPath, labelSelectorPath)
 		if err != nil {
 			return err
 		}
-		return f(scale)
+		return f(ctx, scale)
 	}
 }
 
 func toScaleUpdateValidation(f rest.ValidateObjectUpdateFunc, specReplicasPath, statusReplicasPath, labelSelectorPath string) rest.ValidateObjectUpdateFunc {
-	return func(obj, old runtime.Object) error {
+	return func(ctx context.Context, obj, old runtime.Object) error {
 		newScale, _, err := scaleFromCustomResource(obj.(*unstructured.Unstructured), specReplicasPath, statusReplicasPath, labelSelectorPath)
 		if err != nil {
 			return err
@@ -316,7 +316,7 @@ func toScaleUpdateValidation(f rest.ValidateObjectUpdateFunc, specReplicasPath, 
 		if err != nil {
 			return err
 		}
-		return f(newScale, oldScale)
+		return f(ctx, newScale, oldScale)
 	}
 }
 
@@ -342,7 +342,7 @@ func scaleFromCustomResource(cr *unstructured.Unstructured, specReplicasPath, st
 	var labelSelector string
 	if len(labelSelectorPath) > 0 {
 		labelSelectorPath = strings.TrimPrefix(labelSelectorPath, ".") // ignore leading period
-		labelSelector, found, err = unstructured.NestedString(cr.UnstructuredContent(), strings.Split(labelSelectorPath, ".")...)
+		labelSelector, _, err = unstructured.NestedString(cr.UnstructuredContent(), strings.Split(labelSelectorPath, ".")...)
 		if err != nil {
 			return nil, false, err
 		}

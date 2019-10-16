@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
@@ -90,7 +89,7 @@ func VerifyExecInPodFail(pod *v1.Pod, bashExec string, exitCode int) {
 	if err != nil {
 		if err, ok := err.(uexec.CodeExitError); ok {
 			actualExitCode := err.ExitStatus()
-			gomega.Expect(actualExitCode).To(gomega.Equal(exitCode),
+			framework.ExpectEqual(actualExitCode, exitCode,
 				"%q should fail with exit code %d, but failed with exit code %d and error message %q",
 				bashExec, exitCode, actualExitCode, err)
 		} else {
@@ -102,6 +101,16 @@ func VerifyExecInPodFail(pod *v1.Pod, bashExec string, exitCode int) {
 	framework.ExpectError(err, "%q should fail with exit code %d, but exit without error", bashExec, exitCode)
 }
 
+func isSudoPresent(nodeIP string, provider string) bool {
+	framework.Logf("Checking if sudo command is present")
+	sshResult, err := e2essh.SSH("sudo --version", nodeIP, provider)
+	framework.ExpectNoError(err, "SSH to %q errored.", nodeIP)
+	if !strings.Contains(sshResult.Stderr, "command not found") {
+		return true
+	}
+	return false
+}
+
 // KubeletCommand performs `start`, `restart`, or `stop` on the kubelet running on the node of the target pod and waits
 // for the desired statues..
 // - First issues the command via `systemctl`
@@ -110,23 +119,15 @@ func VerifyExecInPodFail(pod *v1.Pod, bashExec string, exitCode int) {
 // Allowed kubeletOps are `KStart`, `KStop`, and `KRestart`
 func KubeletCommand(kOp KubeletOpt, c clientset.Interface, pod *v1.Pod) {
 	command := ""
-	sudoPresent := false
 	systemctlPresent := false
 	kubeletPid := ""
 
-	nodeIP, err := framework.GetHostExternalAddress(c, pod)
+	nodeIP, err := framework.GetHostAddress(c, pod)
 	framework.ExpectNoError(err)
 	nodeIP = nodeIP + ":22"
 
-	e2elog.Logf("Checking if sudo command is present")
-	sshResult, err := e2essh.SSH("sudo --version", nodeIP, framework.TestContext.Provider)
-	framework.ExpectNoError(err, fmt.Sprintf("SSH to Node %q errored.", pod.Spec.NodeName))
-	if !strings.Contains(sshResult.Stderr, "command not found") {
-		sudoPresent = true
-	}
-
-	e2elog.Logf("Checking if systemctl command is present")
-	sshResult, err = e2essh.SSH("systemctl --version", nodeIP, framework.TestContext.Provider)
+	framework.Logf("Checking if systemctl command is present")
+	sshResult, err := e2essh.SSH("systemctl --version", nodeIP, framework.TestContext.Provider)
 	framework.ExpectNoError(err, fmt.Sprintf("SSH to Node %q errored.", pod.Spec.NodeName))
 	if !strings.Contains(sshResult.Stderr, "command not found") {
 		command = fmt.Sprintf("systemctl %s kubelet", string(kOp))
@@ -134,6 +135,8 @@ func KubeletCommand(kOp KubeletOpt, c clientset.Interface, pod *v1.Pod) {
 	} else {
 		command = fmt.Sprintf("service kubelet %s", string(kOp))
 	}
+
+	sudoPresent := isSudoPresent(nodeIP, framework.TestContext.Provider)
 	if sudoPresent {
 		command = fmt.Sprintf("sudo %s", command)
 	}
@@ -142,7 +145,7 @@ func KubeletCommand(kOp KubeletOpt, c clientset.Interface, pod *v1.Pod) {
 		kubeletPid = getKubeletMainPid(nodeIP, sudoPresent, systemctlPresent)
 	}
 
-	e2elog.Logf("Attempting `%s`", command)
+	framework.Logf("Attempting `%s`", command)
 	sshResult, err = e2essh.SSH(command, nodeIP, framework.TestContext.Provider)
 	framework.ExpectNoError(err, fmt.Sprintf("SSH to Node %q errored.", pod.Spec.NodeName))
 	e2essh.LogResult(sshResult)
@@ -150,7 +153,7 @@ func KubeletCommand(kOp KubeletOpt, c clientset.Interface, pod *v1.Pod) {
 
 	if kOp == KStop {
 		if ok := e2enode.WaitForNodeToBeNotReady(c, pod.Spec.NodeName, NodeStateTimeout); !ok {
-			e2elog.Failf("Node %s failed to enter NotReady state", pod.Spec.NodeName)
+			framework.Failf("Node %s failed to enter NotReady state", pod.Spec.NodeName)
 		}
 	}
 	if kOp == KRestart {
@@ -164,13 +167,13 @@ func KubeletCommand(kOp KubeletOpt, c clientset.Interface, pod *v1.Pod) {
 			}
 		}
 		gomega.Expect(isPidChanged).To(gomega.BeTrue(), "Kubelet PID remained unchanged after restarting Kubelet")
-		e2elog.Logf("Noticed that kubelet PID is changed. Waiting for 30 Seconds for Kubelet to come back")
+		framework.Logf("Noticed that kubelet PID is changed. Waiting for 30 Seconds for Kubelet to come back")
 		time.Sleep(30 * time.Second)
 	}
 	if kOp == KStart || kOp == KRestart {
 		// For kubelet start and restart operations, Wait until Node becomes Ready
 		if ok := e2enode.WaitForNodeToBeReady(c, pod.Spec.NodeName, NodeStateTimeout); !ok {
-			e2elog.Failf("Node %s failed to enter Ready state", pod.Spec.NodeName)
+			framework.Failf("Node %s failed to enter Ready state", pod.Spec.NodeName)
 		}
 	}
 }
@@ -186,7 +189,7 @@ func getKubeletMainPid(nodeIP string, sudoPresent bool, systemctlPresent bool) s
 	if sudoPresent {
 		command = fmt.Sprintf("sudo %s", command)
 	}
-	e2elog.Logf("Attempting `%s`", command)
+	framework.Logf("Attempting `%s`", command)
 	sshResult, err := e2essh.SSH(command, nodeIP, framework.TestContext.Provider)
 	framework.ExpectNoError(err, fmt.Sprintf("SSH to Node %q errored.", nodeIP))
 	e2essh.LogResult(sshResult)
@@ -197,26 +200,44 @@ func getKubeletMainPid(nodeIP string, sudoPresent bool, systemctlPresent bool) s
 
 // TestKubeletRestartsAndRestoresMount tests that a volume mounted to a pod remains mounted after a kubelet restarts
 func TestKubeletRestartsAndRestoresMount(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod) {
+	path := "/mnt/volume1"
+	byteLen := 64
+	seed := time.Now().UTC().UnixNano()
+
 	ginkgo.By("Writing to the volume.")
-	file := "/mnt/_SUCCESS"
-	out, err := PodExec(clientPod, fmt.Sprintf("touch %s", file))
-	e2elog.Logf(out)
-	framework.ExpectNoError(err)
+	CheckWriteToPath(clientPod, v1.PersistentVolumeFilesystem, path, byteLen, seed)
 
 	ginkgo.By("Restarting kubelet")
 	KubeletCommand(KRestart, c, clientPod)
 
 	ginkgo.By("Testing that written file is accessible.")
-	out, err = PodExec(clientPod, fmt.Sprintf("cat %s", file))
-	e2elog.Logf(out)
-	framework.ExpectNoError(err)
-	e2elog.Logf("Volume mount detected on pod %s and written file %s is readable post-restart.", clientPod.Name, file)
+	CheckReadFromPath(clientPod, v1.PersistentVolumeFilesystem, path, byteLen, seed)
+
+	framework.Logf("Volume mount detected on pod %s and written file %s is readable post-restart.", clientPod.Name, path)
+}
+
+// TestKubeletRestartsAndRestoresMap tests that a volume mapped to a pod remains mapped after a kubelet restarts
+func TestKubeletRestartsAndRestoresMap(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod) {
+	path := "/mnt/volume1"
+	byteLen := 64
+	seed := time.Now().UTC().UnixNano()
+
+	ginkgo.By("Writing to the volume.")
+	CheckWriteToPath(clientPod, v1.PersistentVolumeBlock, path, byteLen, seed)
+
+	ginkgo.By("Restarting kubelet")
+	KubeletCommand(KRestart, c, clientPod)
+
+	ginkgo.By("Testing that written pv is accessible.")
+	CheckReadFromPath(clientPod, v1.PersistentVolumeBlock, path, byteLen, seed)
+
+	framework.Logf("Volume map detected on pod %s and written data %s is readable post-restart.", clientPod.Name, path)
 }
 
 // TestVolumeUnmountsFromDeletedPodWithForceOption tests that a volume unmounts if the client pod was deleted while the kubelet was down.
 // forceDelete is true indicating whether the pod is forcefully deleted.
 func TestVolumeUnmountsFromDeletedPodWithForceOption(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod, forceDelete bool, checkSubpath bool) {
-	nodeIP, err := framework.GetHostExternalAddress(c, clientPod)
+	nodeIP, err := framework.GetHostAddress(c, clientPod)
 	framework.ExpectNoError(err)
 	nodeIP = nodeIP + ":22"
 
@@ -267,7 +288,7 @@ func TestVolumeUnmountsFromDeletedPodWithForceOption(c clientset.Interface, f *f
 	e2essh.LogResult(result)
 	framework.ExpectNoError(err, "Encountered SSH error.")
 	gomega.Expect(result.Stdout).To(gomega.BeEmpty(), "Expected grep stdout to be empty (i.e. no mount found).")
-	e2elog.Logf("Volume unmounted on node %s", clientPod.Spec.NodeName)
+	framework.Logf("Volume unmounted on node %s", clientPod.Spec.NodeName)
 
 	if checkSubpath {
 		ginkgo.By("Expecting the volume subpath mount not to be found.")
@@ -275,7 +296,7 @@ func TestVolumeUnmountsFromDeletedPodWithForceOption(c clientset.Interface, f *f
 		e2essh.LogResult(result)
 		framework.ExpectNoError(err, "Encountered SSH error.")
 		gomega.Expect(result.Stdout).To(gomega.BeEmpty(), "Expected grep stdout to be empty (i.e. no subpath mount found).")
-		e2elog.Logf("Subpath volume unmounted on node %s", clientPod.Spec.NodeName)
+		framework.Logf("Subpath volume unmounted on node %s", clientPod.Spec.NodeName)
 	}
 }
 
@@ -287,6 +308,88 @@ func TestVolumeUnmountsFromDeletedPod(c clientset.Interface, f *framework.Framew
 // TestVolumeUnmountsFromForceDeletedPod tests that a volume unmounts if the client pod was forcefully deleted while the kubelet was down.
 func TestVolumeUnmountsFromForceDeletedPod(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod) {
 	TestVolumeUnmountsFromDeletedPodWithForceOption(c, f, clientPod, true, false)
+}
+
+// TestVolumeUnmapsFromDeletedPodWithForceOption tests that a volume unmaps if the client pod was deleted while the kubelet was down.
+// forceDelete is true indicating whether the pod is forcefully deleted.
+func TestVolumeUnmapsFromDeletedPodWithForceOption(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod, forceDelete bool) {
+	nodeIP, err := framework.GetHostAddress(c, clientPod)
+	framework.ExpectNoError(err, "Failed to get nodeIP.")
+	nodeIP = nodeIP + ":22"
+
+	// Creating command to check whether path exists
+	podDirectoryCmd := fmt.Sprintf("ls /var/lib/kubelet/pods/%s/volumeDevices/*/ | grep '.'", clientPod.UID)
+	if isSudoPresent(nodeIP, framework.TestContext.Provider) {
+		podDirectoryCmd = fmt.Sprintf("sudo sh -c \"%s\"", podDirectoryCmd)
+	}
+	// Directories in the global directory have unpredictable names, however, device symlinks
+	// have the same name as pod.UID. So just find anything with pod.UID name.
+	globalBlockDirectoryCmd := fmt.Sprintf("find /var/lib/kubelet/plugins -name %s", clientPod.UID)
+	if isSudoPresent(nodeIP, framework.TestContext.Provider) {
+		globalBlockDirectoryCmd = fmt.Sprintf("sudo sh -c \"%s\"", globalBlockDirectoryCmd)
+	}
+
+	ginkgo.By("Expecting the symlinks from PodDeviceMapPath to be found.")
+	result, err := e2essh.SSH(podDirectoryCmd, nodeIP, framework.TestContext.Provider)
+	e2essh.LogResult(result)
+	framework.ExpectNoError(err, "Encountered SSH error.")
+	framework.ExpectEqual(result.Code, 0, fmt.Sprintf("Expected grep exit code of 0, got %d", result.Code))
+
+	ginkgo.By("Expecting the symlinks from global map path to be found.")
+	result, err = e2essh.SSH(globalBlockDirectoryCmd, nodeIP, framework.TestContext.Provider)
+	e2essh.LogResult(result)
+	framework.ExpectNoError(err, "Encountered SSH error.")
+	framework.ExpectEqual(result.Code, 0, fmt.Sprintf("Expected find exit code of 0, got %d", result.Code))
+
+	// This command is to make sure kubelet is started after test finishes no matter it fails or not.
+	defer func() {
+		KubeletCommand(KStart, c, clientPod)
+	}()
+	ginkgo.By("Stopping the kubelet.")
+	KubeletCommand(KStop, c, clientPod)
+
+	ginkgo.By(fmt.Sprintf("Deleting Pod %q", clientPod.Name))
+	if forceDelete {
+		err = c.CoreV1().Pods(clientPod.Namespace).Delete(clientPod.Name, metav1.NewDeleteOptions(0))
+	} else {
+		err = c.CoreV1().Pods(clientPod.Namespace).Delete(clientPod.Name, &metav1.DeleteOptions{})
+	}
+	framework.ExpectNoError(err, "Failed to delete pod.")
+
+	ginkgo.By("Starting the kubelet and waiting for pod to delete.")
+	KubeletCommand(KStart, c, clientPod)
+	err = f.WaitForPodNotFound(clientPod.Name, framework.PodDeleteTimeout)
+	framework.ExpectNoError(err, "Expected pod to be not found.")
+
+	if forceDelete {
+		// With forceDelete, since pods are immediately deleted from API server, there is no way to be sure when volumes are torn down
+		// so wait some time to finish
+		time.Sleep(30 * time.Second)
+	}
+
+	ginkgo.By("Expecting the symlink from PodDeviceMapPath not to be found.")
+	result, err = e2essh.SSH(podDirectoryCmd, nodeIP, framework.TestContext.Provider)
+	e2essh.LogResult(result)
+	framework.ExpectNoError(err, "Encountered SSH error.")
+	gomega.Expect(result.Stdout).To(gomega.BeEmpty(), "Expected grep stdout to be empty.")
+
+	ginkgo.By("Expecting the symlinks from global map path not to be found.")
+	result, err = e2essh.SSH(globalBlockDirectoryCmd, nodeIP, framework.TestContext.Provider)
+	e2essh.LogResult(result)
+	framework.ExpectNoError(err, "Encountered SSH error.")
+	gomega.Expect(result.Stdout).To(gomega.BeEmpty(), "Expected find stdout to be empty.")
+
+	framework.Logf("Volume unmaped on node %s", clientPod.Spec.NodeName)
+}
+
+// TestVolumeUnmapsFromDeletedPod tests that a volume unmaps if the client pod was deleted while the kubelet was down.
+func TestVolumeUnmapsFromDeletedPod(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod) {
+	TestVolumeUnmapsFromDeletedPodWithForceOption(c, f, clientPod, false)
+}
+
+// TestVolumeUnmapsFromForceDeletedPod tests that a volume unmaps if the client pod was forcefully deleted while the kubelet was down.
+func TestVolumeUnmapsFromForceDeletedPod(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod) {
+	TestVolumeUnmapsFromDeletedPodWithForceOption(c, f, clientPod, true)
 }
 
 // RunInPodWithVolume runs a command in a pod with given claim mounted to /mnt directory.
@@ -353,7 +456,7 @@ func StartExternalProvisioner(c clientset.Interface, ns string, externalPluginNa
 			Containers: []v1.Container{
 				{
 					Name:  "nfs-provisioner",
-					Image: "quay.io/kubernetes_incubator/nfs-provisioner:v2.2.0-k8s1.12",
+					Image: imageutils.GetE2EImage(imageutils.NFSProvisioner),
 					SecurityContext: &v1.SecurityContext{
 						Capabilities: &v1.Capabilities{
 							Add: []v1.Capability{"DAC_READ_SEARCH"},

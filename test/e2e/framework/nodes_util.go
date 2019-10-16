@@ -25,13 +25,14 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
 )
+
+const etcdImage = "3.3.17-0"
 
 // EtcdUpgrade upgrades etcd on GCE.
 func EtcdUpgrade(targetStorage, targetVersion string) error {
@@ -62,7 +63,7 @@ func etcdUpgradeGCE(targetStorage, targetVersion string) error {
 		os.Environ(),
 		"TEST_ETCD_VERSION="+targetVersion,
 		"STORAGE_BACKEND="+targetStorage,
-		"TEST_ETCD_IMAGE=3.3.10-1")
+		"TEST_ETCD_IMAGE="+etcdImage)
 
 	_, _, err := RunCmdEnv(env, gceUpgradeScript(), "-l", "-M")
 	return err
@@ -82,7 +83,7 @@ func masterUpgradeGCE(rawV string, enableKubeProxyDaemonSet bool) error {
 		env = append(env,
 			"TEST_ETCD_VERSION="+TestContext.EtcdUpgradeVersion,
 			"STORAGE_BACKEND="+TestContext.EtcdUpgradeStorage,
-			"TEST_ETCD_IMAGE=3.3.10-1")
+			"TEST_ETCD_IMAGE="+etcdImage)
 	} else {
 		// In e2e tests, we skip the confirmation prompt about
 		// implicit etcd upgrades to simulate the user entering "y".
@@ -111,7 +112,7 @@ func appendContainerCommandGroupIfNeeded(args []string) []string {
 }
 
 func masterUpgradeGKE(v string) error {
-	e2elog.Logf("Upgrading master to %q", v)
+	Logf("Upgrading master to %q", v)
 	args := []string{
 		"container",
 		"clusters",
@@ -134,7 +135,7 @@ func masterUpgradeGKE(v string) error {
 }
 
 func masterUpgradeKubernetesAnywhere(v string) error {
-	e2elog.Logf("Upgrading master to %q", v)
+	Logf("Upgrading master to %q", v)
 
 	kaPath := TestContext.KubernetesAnywherePath
 	originalConfigPath := filepath.Join(kaPath, ".config")
@@ -152,7 +153,7 @@ func masterUpgradeKubernetesAnywhere(v string) error {
 	defer func() {
 		// revert .config.bak to .config
 		if err := os.Rename(backupConfigPath, originalConfigPath); err != nil {
-			e2elog.Logf("Could not rename %s back to %s", backupConfigPath, originalConfigPath)
+			Logf("Could not rename %s back to %s", backupConfigPath, originalConfigPath)
 		}
 	}()
 
@@ -207,7 +208,7 @@ func waitForNodesReadyAfterUpgrade(f *Framework) error {
 	if err != nil {
 		return fmt.Errorf("couldn't detect number of nodes")
 	}
-	e2elog.Logf("Waiting up to %v for all %d nodes to be ready after the upgrade", RestartNodeReadyAgainTimeout, numNodes)
+	Logf("Waiting up to %v for all %d nodes to be ready after the upgrade", RestartNodeReadyAgainTimeout, numNodes)
 	if _, err := e2enode.CheckReady(f.ClientSet, numNodes, RestartNodeReadyAgainTimeout); err != nil {
 		return err
 	}
@@ -228,7 +229,7 @@ func nodeUpgradeGCE(rawV, img string, enableKubeProxyDaemonSet bool) error {
 }
 
 func nodeUpgradeGKE(v string, img string) error {
-	e2elog.Logf("Upgrading nodes to version %q and image %q", v, img)
+	Logf("Upgrading nodes to version %q and image %q", v, img)
 	args := []string{
 		"container",
 		"clusters",
@@ -279,7 +280,7 @@ func MigTemplate() (string, error) {
 		if val := ParseKVLines(output, key); len(val) > 0 {
 			url := strings.Split(val, "/")
 			templ = url[len(url)-1]
-			e2elog.Logf("MIG group %s using template: %s", TestContext.CloudConfig.NodeInstanceGroup, templ)
+			Logf("MIG group %s using template: %s", TestContext.CloudConfig.NodeInstanceGroup, templ)
 			return true, nil
 		}
 		errLast = fmt.Errorf("couldn't find %s in output to get MIG template. Output: %s", key, output)
@@ -298,7 +299,7 @@ func gceUpgradeScript() string {
 }
 
 func waitForSSHTunnels() {
-	e2elog.Logf("Waiting for SSH tunnels to establish")
+	Logf("Waiting for SSH tunnels to establish")
 	RunKubectl("run", "ssh-tunnel-test",
 		"--image=busybox",
 		"--restart=Never",
@@ -322,6 +323,7 @@ type NodeKiller struct {
 
 // NewNodeKiller creates new NodeKiller.
 func NewNodeKiller(config NodeKillerConfig, client clientset.Interface, provider string) *NodeKiller {
+	config.NodeKillerStopCh = make(chan struct{})
 	return &NodeKiller{config, client, provider}
 }
 
@@ -336,13 +338,13 @@ func (k *NodeKiller) Run(stopCh <-chan struct{}) {
 }
 
 func (k *NodeKiller) pickNodes() []v1.Node {
-	nodes := GetReadySchedulableNodesOrDie(k.client)
+	nodes, err := e2enode.GetReadySchedulableNodes(k.client)
+	ExpectNoError(err)
 	numNodes := int(k.config.FailureRatio * float64(len(nodes.Items)))
-	shuffledNodes := shuffleNodes(nodes.Items)
-	if len(shuffledNodes) > numNodes {
-		return shuffledNodes[:numNodes]
-	}
-	return shuffledNodes
+
+	nodes, err = e2enode.GetBoundedReadySchedulableNodes(k.client, numNodes)
+	ExpectNoError(err)
+	return nodes.Items
 }
 
 func (k *NodeKiller) kill(nodes []v1.Node) {
@@ -353,19 +355,19 @@ func (k *NodeKiller) kill(nodes []v1.Node) {
 		go func() {
 			defer wg.Done()
 
-			e2elog.Logf("Stopping docker and kubelet on %q to simulate failure", node.Name)
+			Logf("Stopping docker and kubelet on %q to simulate failure", node.Name)
 			err := e2essh.IssueSSHCommand("sudo systemctl stop docker kubelet", k.provider, &node)
 			if err != nil {
-				e2elog.Logf("ERROR while stopping node %q: %v", node.Name, err)
+				Logf("ERROR while stopping node %q: %v", node.Name, err)
 				return
 			}
 
 			time.Sleep(k.config.SimulatedDowntime)
 
-			e2elog.Logf("Rebooting %q to repair the node", node.Name)
+			Logf("Rebooting %q to repair the node", node.Name)
 			err = e2essh.IssueSSHCommand("sudo reboot", k.provider, &node)
 			if err != nil {
-				e2elog.Logf("ERROR while rebooting node %q: %v", node.Name, err)
+				Logf("ERROR while rebooting node %q: %v", node.Name, err)
 				return
 			}
 		}()

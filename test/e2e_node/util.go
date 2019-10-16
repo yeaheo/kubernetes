@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
-	"k8s.io/klog"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -38,6 +37,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/component-base/featuregate"
 	internalapi "k8s.io/cri-api/pkg/apis"
+	"k8s.io/klog"
 	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
@@ -50,12 +50,12 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/remote"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
-	frameworkmetrics "k8s.io/kubernetes/test/e2e/framework/metrics"
+	e2emetrics "k8s.io/kubernetes/test/e2e/framework/metrics"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo"
+	"github.com/onsi/gomega"
 )
 
 // TODO(random-liu): Get this automatically from kubelet flag.
@@ -64,7 +64,6 @@ var kubeletAddress = flag.String("kubelet-address", "http://127.0.0.1:10255", "H
 var startServices = flag.Bool("start-services", true, "If true, start local node services")
 var stopServices = flag.Bool("stop-services", true, "If true, stop local node services after running tests")
 var busyboxImage = imageutils.GetE2EImage(imageutils.BusyBox)
-var perlImage = imageutils.GetE2EImage(imageutils.Perl)
 
 const (
 	// Kubelet internal cgroup name for node allocatable cgroup.
@@ -137,10 +136,10 @@ func getCurrentKubeletConfig() (*kubeletconfig.KubeletConfiguration, error) {
 // Returns true on success.
 func tempSetCurrentKubeletConfig(f *framework.Framework, updateFunction func(initialConfig *kubeletconfig.KubeletConfiguration)) {
 	var oldCfg *kubeletconfig.KubeletConfiguration
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		configEnabled, err := isKubeletConfigEnabled(f)
 		framework.ExpectNoError(err)
-		Expect(configEnabled).To(BeTrue(), "The Dynamic Kubelet Configuration feature is not enabled.\n"+
+		framework.ExpectEqual(configEnabled, true, "The Dynamic Kubelet Configuration feature is not enabled.\n"+
 			"Pass --feature-gates=DynamicKubeletConfig=true to the Kubelet to enable this feature.\n"+
 			"For `make test-e2e-node`, you can set `TEST_ARGS='--feature-gates=DynamicKubeletConfig=true'`.")
 		oldCfg, err = getCurrentKubeletConfig()
@@ -153,7 +152,7 @@ func tempSetCurrentKubeletConfig(f *framework.Framework, updateFunction func(ini
 
 		framework.ExpectNoError(setKubeletConfiguration(f, newCfg))
 	})
-	AfterEach(func() {
+	ginkgo.AfterEach(func() {
 		if oldCfg != nil {
 			err := setKubeletConfiguration(f, oldCfg)
 			framework.ExpectNoError(err)
@@ -209,15 +208,15 @@ func setKubeletConfiguration(f *framework.Framework, kubeCfg *kubeletconfig.Kube
 	}
 
 	// set the source, retry a few times in case we are competing with other writers
-	Eventually(func() error {
+	gomega.Eventually(func() error {
 		if err := setNodeConfigSource(f, src); err != nil {
 			return err
 		}
 		return nil
-	}, time.Minute, time.Second).Should(BeNil())
+	}, time.Minute, time.Second).Should(gomega.BeNil())
 
 	// poll for new config, for a maximum wait of restartGap
-	Eventually(func() error {
+	gomega.Eventually(func() error {
 		newKubeCfg, err := getCurrentKubeletConfig()
 		if err != nil {
 			return fmt.Errorf("failed trying to get current Kubelet config, will retry, error: %v", err)
@@ -227,7 +226,7 @@ func setKubeletConfiguration(f *framework.Framework, kubeCfg *kubeletconfig.Kube
 		}
 		klog.Infof("new configuration has taken effect")
 		return nil
-	}, restartGap, pollInterval).Should(BeNil())
+	}, restartGap, pollInterval).Should(gomega.BeNil())
 
 	return nil
 }
@@ -265,7 +264,7 @@ func pollConfigz(timeout time.Duration, pollInterval time.Duration) *http.Respon
 	req.Header.Add("Accept", "application/json")
 
 	var resp *http.Response
-	Eventually(func() bool {
+	gomega.Eventually(func() bool {
 		resp, err = client.Do(req)
 		if err != nil {
 			klog.Errorf("Failed to get /configz, retrying. Error: %v", err)
@@ -276,7 +275,7 @@ func pollConfigz(timeout time.Duration, pollInterval time.Duration) *http.Respon
 			return false
 		}
 		return true
-	}, timeout, pollInterval).Should(Equal(true))
+	}, timeout, pollInterval).Should(gomega.Equal(true))
 	return resp
 }
 
@@ -334,20 +333,21 @@ func newKubeletConfigMap(name string, internalKC *kubeletconfig.KubeletConfigura
 }
 
 func logPodEvents(f *framework.Framework) {
-	e2elog.Logf("Summary of pod events during the test:")
+	framework.Logf("Summary of pod events during the test:")
 	err := framework.ListNamespaceEvents(f.ClientSet, f.Namespace.Name)
 	framework.ExpectNoError(err)
 }
 
 func logNodeEvents(f *framework.Framework) {
-	e2elog.Logf("Summary of node events during the test:")
+	framework.Logf("Summary of node events during the test:")
 	err := framework.ListNamespaceEvents(f.ClientSet, "")
 	framework.ExpectNoError(err)
 }
 
 func getLocalNode(f *framework.Framework) *v1.Node {
-	nodeList := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
-	Expect(len(nodeList.Items)).To(Equal(1), "Unexpected number of node objects for node e2e. Expects only one node.")
+	nodeList, err := e2enode.GetReadySchedulableNodes(f.ClientSet)
+	framework.ExpectNoError(err)
+	framework.ExpectEqual(len(nodeList.Items), 1, "Unexpected number of node objects for node e2e. Expects only one node.")
 	return &nodeList.Items[0]
 }
 
@@ -359,23 +359,23 @@ func logKubeletLatencyMetrics(metricNames ...string) {
 	for _, key := range metricNames {
 		metricSet.Insert(kubeletmetrics.KubeletSubsystem + "_" + key)
 	}
-	metric, err := frameworkmetrics.GrabKubeletMetricsWithoutProxy(framework.TestContext.NodeName+":10255", "/metrics")
+	metric, err := e2emetrics.GrabKubeletMetricsWithoutProxy(framework.TestContext.NodeName+":10255", "/metrics")
 	if err != nil {
-		e2elog.Logf("Error getting kubelet metrics: %v", err)
+		framework.Logf("Error getting kubelet metrics: %v", err)
 	} else {
-		e2elog.Logf("Kubelet Metrics: %+v", framework.GetKubeletLatencyMetrics(metric, metricSet))
+		framework.Logf("Kubelet Metrics: %+v", e2emetrics.GetKubeletLatencyMetrics(metric, metricSet))
 	}
 }
 
 // returns config related metrics from the local kubelet, filtered to the filterMetricNames passed in
-func getKubeletMetrics(filterMetricNames sets.String) (frameworkmetrics.KubeletMetrics, error) {
+func getKubeletMetrics(filterMetricNames sets.String) (e2emetrics.KubeletMetrics, error) {
 	// grab Kubelet metrics
-	ms, err := frameworkmetrics.GrabKubeletMetricsWithoutProxy(framework.TestContext.NodeName+":10255", "/metrics")
+	ms, err := e2emetrics.GrabKubeletMetricsWithoutProxy(framework.TestContext.NodeName+":10255", "/metrics")
 	if err != nil {
 		return nil, err
 	}
 
-	filtered := frameworkmetrics.NewKubeletMetrics()
+	filtered := e2emetrics.NewKubeletMetrics()
 	for name := range ms {
 		if !filterMetricNames.Has(name) {
 			continue
@@ -423,9 +423,9 @@ func restartKubelet() {
 	framework.ExpectNoError(err)
 	regex := regexp.MustCompile("(kubelet-\\w+)")
 	matches := regex.FindStringSubmatch(string(stdout))
-	Expect(len(matches)).NotTo(BeZero())
+	framework.ExpectNotEqual(len(matches), 0)
 	kube := matches[0]
-	e2elog.Logf("Get running kubelet with systemctl: %v, %v", string(stdout), kube)
+	framework.Logf("Get running kubelet with systemctl: %v, %v", string(stdout), kube)
 	stdout, err = exec.Command("sudo", "systemctl", "restart", kube).CombinedOutput()
 	framework.ExpectNoError(err, "Failed to restart kubelet with systemctl: %v, %v", err, stdout)
 }
@@ -433,9 +433,8 @@ func restartKubelet() {
 func toCgroupFsName(cgroupName cm.CgroupName) string {
 	if framework.TestContext.KubeletConfig.CgroupDriver == "systemd" {
 		return cgroupName.ToSystemd()
-	} else {
-		return cgroupName.ToCgroupfs()
 	}
+	return cgroupName.ToCgroupfs()
 }
 
 // reduceAllocatableMemoryUsage uses memory.force_empty (https://lwn.net/Articles/432224/)

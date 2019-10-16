@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	testutils "k8s.io/kubernetes/test/utils"
 
@@ -41,9 +40,9 @@ var _ = framework.KubeDescribe("NodeLease", func() {
 	f := framework.NewDefaultFramework("node-lease-test")
 
 	ginkgo.BeforeEach(func() {
-		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
-		gomega.Expect(len(nodes.Items)).NotTo(gomega.BeZero())
-		nodeName = nodes.Items[0].ObjectMeta.Name
+		node, err := e2enode.GetRandomReadySchedulableNode(f.ClientSet)
+		framework.ExpectNoError(err)
+		nodeName = node.Name
 	})
 
 	ginkgo.Context("when the NodeLease feature is enabled", func() {
@@ -117,23 +116,23 @@ var _ = framework.KubeDescribe("NodeLease", func() {
 				if currentHeartbeatTime == lastHeartbeatTime {
 					if currentObserved.Sub(lastObserved) > 2*leaseDuration {
 						// heartbeat hasn't changed while watching for at least 2*leaseDuration, success!
-						e2elog.Logf("node status heartbeat is unchanged for %s, was waiting for at least %s, success!", currentObserved.Sub(lastObserved), 2*leaseDuration)
+						framework.Logf("node status heartbeat is unchanged for %s, was waiting for at least %s, success!", currentObserved.Sub(lastObserved), 2*leaseDuration)
 						return true, nil
 					}
-					e2elog.Logf("node status heartbeat is unchanged for %s, waiting for %s", currentObserved.Sub(lastObserved), 2*leaseDuration)
+					framework.Logf("node status heartbeat is unchanged for %s, waiting for %s", currentObserved.Sub(lastObserved), 2*leaseDuration)
 					return false, nil
 				}
 
 				if currentHeartbeatTime.Sub(lastHeartbeatTime) >= leaseDuration {
 					// heartbeat time changed, but the diff was greater than leaseDuration, success!
-					e2elog.Logf("node status heartbeat changed in %s, was waiting for at least %s, success!", currentHeartbeatTime.Sub(lastHeartbeatTime), leaseDuration)
+					framework.Logf("node status heartbeat changed in %s, was waiting for at least %s, success!", currentHeartbeatTime.Sub(lastHeartbeatTime), leaseDuration)
 					return true, nil
 				}
 
 				if !apiequality.Semantic.DeepEqual(lastStatus, currentStatus) {
 					// heartbeat time changed, but there were relevant changes in the status, keep waiting
-					e2elog.Logf("node status heartbeat changed in %s (with other status changes), waiting for %s", currentHeartbeatTime.Sub(lastHeartbeatTime), leaseDuration)
-					e2elog.Logf("%s", diff.ObjectReflectDiff(lastStatus, currentStatus))
+					framework.Logf("node status heartbeat changed in %s (with other status changes), waiting for %s", currentHeartbeatTime.Sub(lastHeartbeatTime), leaseDuration)
+					framework.Logf("%s", diff.ObjectReflectDiff(lastStatus, currentStatus))
 					lastHeartbeatTime = currentHeartbeatTime
 					lastObserved = currentObserved
 					lastStatus = currentStatus
@@ -155,7 +154,7 @@ var _ = framework.KubeDescribe("NodeLease", func() {
 			node, err := f.ClientSet.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 			gomega.Expect(err).To(gomega.BeNil())
 			_, readyCondition := testutils.GetNodeCondition(&node.Status, v1.NodeReady)
-			gomega.Expect(readyCondition.Status).To(gomega.Equal(v1.ConditionTrue))
+			framework.ExpectEqual(readyCondition.Status, v1.ConditionTrue)
 		})
 	})
 })
@@ -164,7 +163,7 @@ func getHeartbeatTimeAndStatus(clientSet clientset.Interface, nodeName string) (
 	node, err := clientSet.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	gomega.Expect(err).To(gomega.BeNil())
 	_, readyCondition := testutils.GetNodeCondition(&node.Status, v1.NodeReady)
-	gomega.Expect(readyCondition.Status).To(gomega.Equal(v1.ConditionTrue))
+	framework.ExpectEqual(readyCondition.Status, v1.ConditionTrue)
 	heartbeatTime := readyCondition.LastHeartbeatTime.Time
 	readyCondition.LastHeartbeatTime = metav1.Time{}
 	return heartbeatTime, node.Status

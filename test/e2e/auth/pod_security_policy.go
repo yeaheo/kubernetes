@@ -35,6 +35,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/auth"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epsp "k8s.io/kubernetes/test/e2e/framework/psp"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	utilpointer "k8s.io/utils/pointer"
 
@@ -53,7 +54,7 @@ var _ = SIGDescribe("PodSecurityPolicy", func() {
 	var c clientset.Interface
 	var ns string // Test namespace, for convenience
 	ginkgo.BeforeEach(func() {
-		if !framework.IsPodSecurityPolicyEnabled(f) {
+		if !e2epsp.IsPodSecurityPolicyEnabled(f.ClientSet) {
 			framework.Skipf("PodSecurityPolicy not enabled")
 		}
 		if !auth.IsRBACEnabled(f.ClientSet.RbacV1()) {
@@ -117,7 +118,7 @@ var _ = SIGDescribe("PodSecurityPolicy", func() {
 			framework.ExpectNoError(err)
 			validated, found := p.Annotations[psputil.ValidatedPSPAnnotation]
 			gomega.Expect(found).To(gomega.BeTrue(), "PSP annotation not found")
-			gomega.Expect(validated).To(gomega.Equal(expectedPSP.Name), "Unexpected validated PSP")
+			framework.ExpectEqual(validated, expectedPSP.Name, "Unexpected validated PSP")
 		})
 	})
 })

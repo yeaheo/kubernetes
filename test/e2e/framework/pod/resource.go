@@ -35,15 +35,10 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/client/conditions"
-	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
-)
-
-var (
-	// BusyBoxImage is the image URI of BusyBox.
-	BusyBoxImage = imageutils.GetE2EImage(imageutils.BusyBox)
 )
 
 // TODO: Move to its own subpkg.
@@ -61,20 +56,6 @@ func expectNoErrorWithOffset(offset int, err error, explain ...interface{}) {
 		e2elog.Logf("Unexpected error occurred: %v", err)
 	}
 	gomega.ExpectWithOffset(1+offset, err).NotTo(gomega.HaveOccurred(), explain...)
-}
-
-// TODO: Move to its own subpkg.
-// expectNoErrorWithRetries checks if an error occurs with the given retry count.
-func expectNoErrorWithRetries(fn func() error, maxRetries int, explain ...interface{}) {
-	var err error
-	for i := 0; i < maxRetries; i++ {
-		err = fn()
-		if err == nil {
-			return
-		}
-		e2elog.Logf("(Attempt %d of %d) Unexpected error occurred: %v", i+1, maxRetries, err)
-	}
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), explain...)
 }
 
 func isElementOf(podUID types.UID, pods *v1.PodList) bool {
@@ -408,9 +389,9 @@ func LogPodStates(pods []v1.Pod) {
 	e2elog.Logf("") // Final empty line helps for readability.
 }
 
-// LogPodTerminationMessages logs termination messages for failing pods.  It's a short snippet (much smaller than full logs), but it often shows
+// logPodTerminationMessages logs termination messages for failing pods.  It's a short snippet (much smaller than full logs), but it often shows
 // why pods crashed and since it is in the API, it's fast to retrieve.
-func LogPodTerminationMessages(pods []v1.Pod) {
+func logPodTerminationMessages(pods []v1.Pod) {
 	for _, pod := range pods {
 		for _, status := range pod.Status.InitContainerStatuses {
 			if status.LastTerminationState.Terminated != nil && len(status.LastTerminationState.Terminated.Message) > 0 {
@@ -432,7 +413,7 @@ func DumpAllPodInfoForNamespace(c clientset.Interface, namespace string) {
 		e2elog.Logf("unable to fetch pod debug info: %v", err)
 	}
 	LogPodStates(pods.Items)
-	LogPodTerminationMessages(pods.Items)
+	logPodTerminationMessages(pods.Items)
 }
 
 // FilterNonRestartablePods filters out pods that will never get recreated if
@@ -453,7 +434,7 @@ func FilterNonRestartablePods(pods []*v1.Pod) []*v1.Pod {
 }
 
 func isNotRestartAlwaysMirrorPod(p *v1.Pod) bool {
-	if !kubepod.IsMirrorPod(p) {
+	if !kubetypes.IsMirrorPod(p) {
 		return false
 	}
 	return p.Spec.RestartPolicy != v1.RestartPolicyAlways
@@ -516,19 +497,18 @@ func newExecPodSpec(ns, generateName string) *v1.Pod {
 	return pod
 }
 
-// CreateExecPodOrFail creates a simple busybox pod in a sleep loop used as a
-// vessel for kubectl exec commands.
-// Returns the name of the created pod.
-func CreateExecPodOrFail(client clientset.Interface, ns, generateName string, tweak func(*v1.Pod)) string {
+// CreateExecPodOrFail creates a agnhost pause pod used as a vessel for kubectl exec commands.
+// Pod name is uniquely generated.
+func CreateExecPodOrFail(client clientset.Interface, ns, generateName string, tweak func(*v1.Pod)) *v1.Pod {
 	e2elog.Logf("Creating new exec pod")
-	execPod := newExecPodSpec(ns, generateName)
+	pod := newExecPodSpec(ns, generateName)
 	if tweak != nil {
-		tweak(execPod)
+		tweak(pod)
 	}
-	created, err := client.CoreV1().Pods(ns).Create(execPod)
+	execPod, err := client.CoreV1().Pods(ns).Create(pod)
 	expectNoError(err, "failed to create new exec pod in namespace: %s", ns)
 	err = wait.PollImmediate(poll, 5*time.Minute, func() (bool, error) {
-		retrievedPod, err := client.CoreV1().Pods(execPod.Namespace).Get(created.Name, metav1.GetOptions{})
+		retrievedPod, err := client.CoreV1().Pods(execPod.Namespace).Get(execPod.Name, metav1.GetOptions{})
 		if err != nil {
 			if testutils.IsRetryableAPIError(err) {
 				return false, nil
@@ -538,7 +518,7 @@ func CreateExecPodOrFail(client clientset.Interface, ns, generateName string, tw
 		return retrievedPod.Status.Phase == v1.PodRunning, nil
 	})
 	expectNoError(err)
-	return created.Name
+	return execPod
 }
 
 // CreatePodOrFail creates a pod with the specified containerPorts.
@@ -567,30 +547,23 @@ func CreatePodOrFail(c clientset.Interface, ns, name string, labels map[string]s
 	expectNoError(err, "failed to create pod %s in namespace %s", name, ns)
 }
 
-// DeletePodOrFail deletes the pod of the specified namespace and name.
-func DeletePodOrFail(c clientset.Interface, ns, name string) {
-	ginkgo.By(fmt.Sprintf("Deleting pod %s in namespace %s", name, ns))
-	err := c.CoreV1().Pods(ns).Delete(name, nil)
-	expectNoError(err, "failed to delete pod %s in namespace %s", name, ns)
-}
-
 // CheckPodsRunningReady returns whether all pods whose names are listed in
 // podNames in namespace ns are running and ready, using c and waiting at most
 // timeout.
 func CheckPodsRunningReady(c clientset.Interface, ns string, podNames []string, timeout time.Duration) bool {
-	return CheckPodsCondition(c, ns, podNames, timeout, testutils.PodRunningReady, "running and ready")
+	return checkPodsCondition(c, ns, podNames, timeout, testutils.PodRunningReady, "running and ready")
 }
 
 // CheckPodsRunningReadyOrSucceeded returns whether all pods whose names are
 // listed in podNames in namespace ns are running and ready, or succeeded; use
 // c and waiting at most timeout.
 func CheckPodsRunningReadyOrSucceeded(c clientset.Interface, ns string, podNames []string, timeout time.Duration) bool {
-	return CheckPodsCondition(c, ns, podNames, timeout, testutils.PodRunningReadyOrSucceeded, "running and ready, or succeeded")
+	return checkPodsCondition(c, ns, podNames, timeout, testutils.PodRunningReadyOrSucceeded, "running and ready, or succeeded")
 }
 
-// CheckPodsCondition returns whether all pods whose names are listed in podNames
+// checkPodsCondition returns whether all pods whose names are listed in podNames
 // in namespace ns are in the condition, using c and waiting at most timeout.
-func CheckPodsCondition(c clientset.Interface, ns string, podNames []string, timeout time.Duration, condition podCondition, desc string) bool {
+func checkPodsCondition(c clientset.Interface, ns string, podNames []string, timeout time.Duration, condition podCondition, desc string) bool {
 	np := len(podNames)
 	e2elog.Logf("Waiting up to %v for %d pods to be %s: %s", timeout, np, desc, podNames)
 	type waitPodResult struct {
@@ -687,4 +660,18 @@ func GetPodsScheduled(masterNodes sets.String, pods *v1.PodList) (scheduledPods,
 		}
 	}
 	return
+}
+
+// PatchContainerImages replaces the specified Container Registry with a custom
+// one provided via the KUBE_TEST_REPO_LIST env variable
+func PatchContainerImages(containers []v1.Container) error {
+	var err error
+	for _, c := range containers {
+		c.Image, err = imageutils.ReplaceRegistryInImageURL(c.Image)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

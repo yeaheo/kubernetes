@@ -20,19 +20,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
-	"k8s.io/klog"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
+	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
+	"k8s.io/apiserver/pkg/authentication/request/x509"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/cert"
+	"k8s.io/klog"
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 )
 
@@ -45,6 +49,35 @@ type RequestHeaderAuthenticationOptions struct {
 	GroupHeaders        []string
 	ExtraHeaderPrefixes []string
 	AllowedNames        []string
+}
+
+func (s *RequestHeaderAuthenticationOptions) Validate() []error {
+	allErrors := []error{}
+
+	if err := checkForWhiteSpaceOnly("requestheader-username-headers", s.UsernameHeaders...); err != nil {
+		allErrors = append(allErrors, err)
+	}
+	if err := checkForWhiteSpaceOnly("requestheader-group-headers", s.GroupHeaders...); err != nil {
+		allErrors = append(allErrors, err)
+	}
+	if err := checkForWhiteSpaceOnly("requestheader-extra-headers-prefix", s.ExtraHeaderPrefixes...); err != nil {
+		allErrors = append(allErrors, err)
+	}
+	if err := checkForWhiteSpaceOnly("requestheader-allowed-names", s.AllowedNames...); err != nil {
+		allErrors = append(allErrors, err)
+	}
+
+	return allErrors
+}
+
+func checkForWhiteSpaceOnly(flag string, headerNames ...string) error {
+	for _, headerName := range headerNames {
+		if len(strings.TrimSpace(headerName)) == 0 {
+			return fmt.Errorf("empty value in %q", flag)
+		}
+	}
+
+	return nil
 }
 
 func (s *RequestHeaderAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
@@ -74,23 +107,48 @@ func (s *RequestHeaderAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 
 // ToAuthenticationRequestHeaderConfig returns a RequestHeaderConfig config object for these options
 // if necessary, nil otherwise.
-func (s *RequestHeaderAuthenticationOptions) ToAuthenticationRequestHeaderConfig() *authenticatorfactory.RequestHeaderConfig {
+func (s *RequestHeaderAuthenticationOptions) ToAuthenticationRequestHeaderConfig() (*authenticatorfactory.RequestHeaderConfig, error) {
 	if len(s.ClientCAFile) == 0 {
-		return nil
+		return nil, nil
+	}
+
+	verifyFn, err := x509.NewStaticVerifierFromFile(s.ClientCAFile)
+	if err != nil {
+		return nil, err
 	}
 
 	return &authenticatorfactory.RequestHeaderConfig{
-		UsernameHeaders:     s.UsernameHeaders,
-		GroupHeaders:        s.GroupHeaders,
-		ExtraHeaderPrefixes: s.ExtraHeaderPrefixes,
-		ClientCA:            s.ClientCAFile,
-		AllowedClientNames:  s.AllowedNames,
-	}
+		UsernameHeaders:     headerrequest.StaticStringSlice(s.UsernameHeaders),
+		GroupHeaders:        headerrequest.StaticStringSlice(s.GroupHeaders),
+		ExtraHeaderPrefixes: headerrequest.StaticStringSlice(s.ExtraHeaderPrefixes),
+		VerifyOptionFn:      verifyFn,
+		AllowedClientNames:  headerrequest.StaticStringSlice(s.AllowedNames),
+	}, nil
 }
 
+// ClientCertAuthenticationOptions provides different options for client cert auth. You should use `GetClientVerifyOptionFn` to
+// get the verify options for your authenticator.
 type ClientCertAuthenticationOptions struct {
 	// ClientCA is the certificate bundle for all the signers that you'll recognize for incoming client certificates
 	ClientCA string
+
+	// ClientVerifyOptionFn are the options for verifying incoming connections using mTLS and directly assigning to users.
+	// Generally this is the CA bundle file used to authenticate client certificates
+	// If non-nil, this takes priority over the ClientCA file.
+	ClientVerifyOptionFn x509.VerifyOptionFunc
+}
+
+// GetClientVerifyOptionFn provides verify options for your authenticator while respecting the preferred order of verifiers.
+func (s *ClientCertAuthenticationOptions) GetClientVerifyOptionFn() (x509.VerifyOptionFunc, error) {
+	if s.ClientVerifyOptionFn != nil {
+		return s.ClientVerifyOptionFn, nil
+	}
+
+	if len(s.ClientCA) == 0 {
+		return nil, nil
+	}
+
+	return x509.NewStaticVerifierFromFile(s.ClientCA)
 }
 
 func (s *ClientCertAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
@@ -140,6 +198,8 @@ func NewDelegatingAuthenticationOptions() *DelegatingAuthenticationOptions {
 
 func (s *DelegatingAuthenticationOptions) Validate() []error {
 	allErrors := []error{}
+	allErrors = append(allErrors, s.RequestHeader.Validate()...)
+
 	return allErrors
 }
 
@@ -206,12 +266,18 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(c *server.AuthenticationInfo, 
 	}
 
 	// configure AuthenticationInfo config
-	cfg.ClientCAFile = s.ClientCert.ClientCA
+	cfg.ClientVerifyOptionFn, err = s.ClientCert.GetClientVerifyOptionFn()
+	if err != nil {
+		return fmt.Errorf("unable to load client CA file: %v", err)
+	}
 	if err = c.ApplyClientCert(s.ClientCert.ClientCA, servingInfo); err != nil {
 		return fmt.Errorf("unable to load client CA file: %v", err)
 	}
 
-	cfg.RequestHeaderConfig = s.RequestHeader.ToAuthenticationRequestHeaderConfig()
+	cfg.RequestHeaderConfig, err = s.RequestHeader.ToAuthenticationRequestHeaderConfig()
+	if err != nil {
+		return fmt.Errorf("unable to create request header authentication config: %v", err)
+	}
 	if err = c.ApplyClientCert(s.RequestHeader.ClientCAFile, servingInfo); err != nil {
 		return fmt.Errorf("unable to load client CA file: %v", err)
 	}
@@ -307,6 +373,16 @@ func inClusterClientCA(authConfigMap *v1.ConfigMap) (*ClientCertAuthenticationOp
 		return nil, nil
 	}
 
+	clientCAs, err := cert.NewPoolFromBytes([]byte(clientCA))
+	if err != nil {
+		return nil, fmt.Errorf("unable to load client CA from configmap: %v", err)
+	}
+	verifyOpts := x509.DefaultVerifyOptions()
+	verifyOpts.Roots = clientCAs
+
+	// we still need to write out the client-ca-file for now because it is used to plumb the options through the apiserver's
+	// configuration to hint clients.
+	// TODO deads2k this should eventually be made dynamic along with the authenticator.  I'm just wiring them one at at time.
 	f, err := ioutil.TempFile("", "client-ca-file")
 	if err != nil {
 		return nil, err
@@ -314,7 +390,11 @@ func inClusterClientCA(authConfigMap *v1.ConfigMap) (*ClientCertAuthenticationOp
 	if err := ioutil.WriteFile(f.Name(), []byte(clientCA), 0600); err != nil {
 		return nil, err
 	}
-	return &ClientCertAuthenticationOptions{ClientCA: f.Name()}, nil
+
+	return &ClientCertAuthenticationOptions{
+		ClientCA:             f.Name(),
+		ClientVerifyOptionFn: x509.StaticVerifierFn(verifyOpts),
+	}, nil
 }
 
 func inClusterRequestHeader(authConfigMap *v1.ConfigMap) (*RequestHeaderAuthenticationOptions, error) {

@@ -29,21 +29,22 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 )
 
 var (
 	baseURL                                           = flag.String("url", "https://github.com/kubernetes/kubernetes/tree/master/", "location of the current source")
 	confDoc                                           = flag.Bool("conformance", false, "write a conformance document")
+	version                                           = flag.String("version", "v1.9", "version of this conformance document")
 	totalConfTests, totalLegacyTests, missingComments int
 
 	// If a test name contains any of these tags, it is ineligble for promotion to conformance
-	regexIneligibleTags = regexp.MustCompile(`\[(Alpha|Disruptive|Feature:[^\]]+|Flaky)\]`)
+	regexIneligibleTags = regexp.MustCompile(`\[(Alpha|Feature:[^\]]+|Flaky)\]`)
 )
 
 const regexDescribe = "Describe|KubeDescribe|SIGDescribe"
@@ -179,6 +180,7 @@ func (v *visitor) comment(x *ast.BasicLit) string {
 			//proximity of the comment and apply it.
 			myf, err := os.Open(v.FileSet.File(x.Pos()).Name())
 			if err == nil {
+				defer myf.Close()
 				if _, err := myf.Seek(int64(comm.End()), 0); err == nil {
 					if _, err := myf.Read(b1); err == nil {
 						if strings.Compare(strings.Trim(string(b1), "\t \r\n"), "framework.ConformanceIt(\"") == 0 {
@@ -385,10 +387,16 @@ func main() {
 
 	if *confDoc {
 		// Note: this assumes that you're running from the root of the kube src repo
-		header, err := ioutil.ReadFile("test/conformance/cf_header.md")
-		if err == nil {
-			fmt.Printf("%s\n\n", header)
+		templ, err := template.ParseFiles("test/conformance/cf_header.md")
+		if err != nil {
+			fmt.Printf("Error reading the Header file information: %s\n\n", err)
 		}
+		data := struct {
+			Version string
+		}{
+			Version: *version,
+		}
+		templ.Execute(os.Stdout, data)
 	}
 
 	totalConfTests = 0

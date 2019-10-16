@@ -29,14 +29,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/klog"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
-	"github.com/onsi/gomega"
-	"k8s.io/klog"
 )
 
 const (
@@ -90,15 +89,15 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 
 		framework.ExpectNoError(e2enode.WaitForReadyNodes(c, sum, scaleUpTimeout))
 
-		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
+		nodes, err := e2enode.GetReadySchedulableNodes(f.ClientSet)
+		framework.ExpectNoError(err)
 		nodeCount = len(nodes.Items)
-		gomega.Expect(nodeCount).NotTo(gomega.BeZero())
 		cpu := nodes.Items[0].Status.Capacity[v1.ResourceCPU]
 		mem := nodes.Items[0].Status.Capacity[v1.ResourceMemory]
 		coresPerNode = int((&cpu).MilliValue() / 1000)
 		memCapacityMb = int((&mem).Value() / 1024 / 1024)
 
-		gomega.Expect(nodeCount).Should(gomega.Equal(sum))
+		framework.ExpectEqual(nodeCount, sum)
 
 		if framework.ProviderIs("gke") {
 			val, err := isAutoscalerEnabled(3)
@@ -324,9 +323,10 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		time.Sleep(scaleDownTimeout)
 
 		ginkgo.By("Checking if the number of nodes is as expected")
-		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
+		nodes, err := e2enode.GetReadySchedulableNodes(f.ClientSet)
+		framework.ExpectNoError(err)
 		klog.Infof("Nodes: %v, expected: %v", len(nodes.Items), totalNodes)
-		gomega.Expect(len(nodes.Items)).Should(gomega.Equal(totalNodes))
+		framework.ExpectEqual(len(nodes.Items), totalNodes)
 	})
 
 	ginkgo.Specify("CA ignores unschedulable pods while scheduling schedulable pods [Feature:ClusterAutoscalerScalability6]", func() {
@@ -349,7 +349,8 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		defer framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, podsConfig.Name)
 
 		// Ensure that no new nodes have been added so far.
-		gomega.Expect(e2enode.TotalReady(f.ClientSet)).To(gomega.Equal(nodeCount))
+		readyNodeCount, _ := e2enode.TotalReady(f.ClientSet)
+		framework.ExpectEqual(readyNodeCount, nodeCount)
 
 		// Start a number of schedulable pods to ensure CA reacts.
 		additionalNodes := maxNodes - nodeCount
