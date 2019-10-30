@@ -25,7 +25,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	fakelisters "k8s.io/kubernetes/pkg/scheduler/listers/fake"
 	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
+	nodeinfosnapshot "k8s.io/kubernetes/pkg/scheduler/nodeinfo/snapshot"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
 )
 
@@ -39,7 +41,7 @@ func (s sortablePods) Less(i, j int) bool {
 func (s sortablePods) Len() int      { return len(s) }
 func (s sortablePods) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
-var _ = sort.Interface(&sortablePods{})
+var _ sort.Interface = &sortablePods{}
 
 // sortableServices allows us to sort services.
 type sortableServices []*v1.Service
@@ -51,7 +53,7 @@ func (s sortableServices) Less(i, j int) bool {
 func (s sortableServices) Len() int      { return len(s) }
 func (s sortableServices) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
-var _ = sort.Interface(&sortableServices{})
+var _ sort.Interface = &sortableServices{}
 
 // predicateMetadataEquivalent returns true if the two metadata are equivalent.
 // Note: this function does not compare podRequest.
@@ -350,26 +352,21 @@ func TestPredicateMetadata_AddRemovePod(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			allPodLister := st.FakePodLister(append(test.existingPods, test.addedPod))
+			allPodLister := fakelisters.PodLister(append(test.existingPods, test.addedPod))
 			// getMeta creates predicate meta data given the list of pods.
-			getMeta := func(lister st.FakePodLister) (*predicateMetadata, map[string]*schedulernodeinfo.NodeInfo) {
-				nodeInfoMap := schedulernodeinfo.CreateNodeNameToInfoMap(lister, test.nodes)
-				// nodeList is a list of non-pointer nodes to feed to FakeNodeListInfo.
-				nodeList := []v1.Node{}
-				for _, n := range test.nodes {
-					nodeList = append(nodeList, *n)
-				}
-				_, precompute := NewServiceAffinityPredicate(lister, st.FakeServiceLister(test.services), FakeNodeListInfo(nodeList), nil)
+			getMeta := func(pods []*v1.Pod) (*predicateMetadata, map[string]*schedulernodeinfo.NodeInfo) {
+				s := nodeinfosnapshot.NewSnapshot(pods, test.nodes)
+				_, precompute := NewServiceAffinityPredicate(s.NodeInfos(), s.Pods(), fakelisters.ServiceLister(test.services), nil)
 				RegisterPredicateMetadataProducer("ServiceAffinityMetaProducer", precompute)
-				meta := GetPredicateMetadata(test.pendingPod, nodeInfoMap)
-				return meta.(*predicateMetadata), nodeInfoMap
+				meta := GetPredicateMetadata(test.pendingPod, s)
+				return meta.(*predicateMetadata), s.NodeInfoMap
 			}
 
 			// allPodsMeta is meta data produced when all pods, including test.addedPod
 			// are given to the metadata producer.
 			allPodsMeta, _ := getMeta(allPodLister)
 			// existingPodsMeta1 is meta data produced for test.existingPods (without test.addedPod).
-			existingPodsMeta1, nodeInfoMap := getMeta(st.FakePodLister(test.existingPods))
+			existingPodsMeta1, nodeInfoMap := getMeta(fakelisters.PodLister(test.existingPods))
 			// Add test.addedPod to existingPodsMeta1 and make sure meta is equal to allPodsMeta
 			nodeInfo := nodeInfoMap[test.addedPod.Spec.NodeName]
 			if err := existingPodsMeta1.AddPod(test.addedPod, nodeInfo.Node()); err != nil {
@@ -380,7 +377,7 @@ func TestPredicateMetadata_AddRemovePod(t *testing.T) {
 			}
 			// Remove the added pod and from existingPodsMeta1 an make sure it is equal
 			// to meta generated for existing pods.
-			existingPodsMeta2, _ := getMeta(st.FakePodLister(test.existingPods))
+			existingPodsMeta2, _ := getMeta(fakelisters.PodLister(test.existingPods))
 			if err := existingPodsMeta1.RemovePod(test.addedPod, nil); err != nil {
 				t.Errorf("error removing pod from meta: %v", err)
 			}
@@ -788,9 +785,9 @@ func TestGetTPMapMatchingIncomingAffinityAntiAffinity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nodeInfoMap := schedulernodeinfo.CreateNodeNameToInfoMap(tt.existingPods, tt.nodes)
-
-			gotAffinityPodsMaps, gotAntiAffinityPodsMaps, err := getTPMapMatchingIncomingAffinityAntiAffinity(tt.pod, nodeInfoMap)
+			s := nodeinfosnapshot.NewSnapshot(tt.existingPods, tt.nodes)
+			l, _ := s.NodeInfos().List()
+			gotAffinityPodsMaps, gotAntiAffinityPodsMaps, err := getTPMapMatchingIncomingAffinityAntiAffinity(tt.pod, l)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getTPMapMatchingIncomingAffinityAntiAffinity() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -1184,8 +1181,9 @@ func TestGetTPMapMatchingSpreadConstraints(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nodeInfoMap := schedulernodeinfo.CreateNodeNameToInfoMap(tt.existingPods, tt.nodes)
-			got, _ := getEvenPodsSpreadMetadata(tt.pod, nodeInfoMap)
+			s := nodeinfosnapshot.NewSnapshot(tt.existingPods, tt.nodes)
+			l, _ := s.NodeInfos().List()
+			got, _ := getEvenPodsSpreadMetadata(tt.pod, l)
 			got.sortCriticalPaths()
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("getEvenPodsSpreadMetadata() = %v, want %v", *got, *tt.want)
@@ -1451,9 +1449,9 @@ func TestPodSpreadCache_addPod(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nodeInfoMap := schedulernodeinfo.CreateNodeNameToInfoMap(tt.existingPods, tt.nodes)
-			evenPodsSpreadMetadata, _ := getEvenPodsSpreadMetadata(tt.preemptor, nodeInfoMap)
-
+			s := nodeinfosnapshot.NewSnapshot(tt.existingPods, tt.nodes)
+			l, _ := s.NodeInfos().List()
+			evenPodsSpreadMetadata, _ := getEvenPodsSpreadMetadata(tt.preemptor, l)
 			evenPodsSpreadMetadata.addPod(tt.addedPod, tt.preemptor, tt.nodes[tt.nodeIdx])
 			evenPodsSpreadMetadata.sortCriticalPaths()
 			if !reflect.DeepEqual(evenPodsSpreadMetadata, tt.want) {
@@ -1629,8 +1627,9 @@ func TestPodSpreadCache_removePod(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nodeInfoMap := schedulernodeinfo.CreateNodeNameToInfoMap(tt.existingPods, tt.nodes)
-			evenPodsSpreadMetadata, _ := getEvenPodsSpreadMetadata(tt.preemptor, nodeInfoMap)
+			s := nodeinfosnapshot.NewSnapshot(tt.existingPods, tt.nodes)
+			l, _ := s.NodeInfos().List()
+			evenPodsSpreadMetadata, _ := getEvenPodsSpreadMetadata(tt.preemptor, l)
 
 			var deletedPod *v1.Pod
 			if tt.deletedPodIdx < len(tt.existingPods) && tt.deletedPodIdx >= 0 {
@@ -1687,10 +1686,11 @@ func BenchmarkTestGetTPMapMatchingSpreadConstraints(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			existingPods, allNodes, _ := st.MakeNodesAndPodsForEvenPodsSpread(tt.pod, tt.existingPodsNum, tt.allNodesNum, tt.filteredNodesNum)
-			nodeNameToInfo := schedulernodeinfo.CreateNodeNameToInfoMap(existingPods, allNodes)
+			s := nodeinfosnapshot.NewSnapshot(existingPods, allNodes)
+			l, _ := s.NodeInfos().List()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				getEvenPodsSpreadMetadata(tt.pod, nodeNameToInfo)
+				getEvenPodsSpreadMetadata(tt.pod, l)
 			}
 		})
 	}

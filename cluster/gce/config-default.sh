@@ -83,7 +83,7 @@ fi
 # you are updating the os image versions, update this variable.
 # Also please update corresponding image for node e2e at:
 # https://github.com/kubernetes/kubernetes/blob/master/test/e2e_node/jenkins/image-config.yaml
-GCI_VERSION=${KUBE_GCI_VERSION:-cos-73-11647-163-0}
+GCI_VERSION=${KUBE_GCI_VERSION:-cos-77-12371-89-0}
 MASTER_IMAGE=${KUBE_GCE_MASTER_IMAGE:-}
 MASTER_IMAGE_PROJECT=${KUBE_GCE_MASTER_PROJECT:-cos-cloud}
 NODE_IMAGE=${KUBE_GCE_NODE_IMAGE:-${GCI_VERSION}}
@@ -159,9 +159,6 @@ ENABLE_L7_LOADBALANCING="${KUBE_ENABLE_L7_LOADBALANCING:-glbc}"
 #   googleinfluxdb - Enable influxdb and google (except GCM)
 #   standalone     - Heapster only. Metrics available via Heapster REST API.
 ENABLE_CLUSTER_MONITORING="${KUBE_ENABLE_CLUSTER_MONITORING:-standalone}"
-
-# Optional: Enable deploying separate prometheus stack for monitoring kubernetes cluster
-ENABLE_PROMETHEUS_MONITORING="${KUBE_ENABLE_PROMETHEUS_MONITORING:-false}"
 
 # Optional: Enable Metrics Server. Metrics Server should be enable everywhere,
 # since it's a critical component, but in the first release we need a way to disable
@@ -496,6 +493,7 @@ WINDOWS_NODE_TAINTS="${WINDOWS_NODE_TAINTS:-node.kubernetes.io/os=win1809:NoSche
 
 # Whether to set up a private GCE cluster, i.e. a cluster where nodes have only private IPs.
 GCE_PRIVATE_CLUSTER="${KUBE_GCE_PRIVATE_CLUSTER:-false}"
+GCE_PRIVATE_CLUSTER_PORTS_PER_VM="${KUBE_GCE_PRIVATE_CLUSTER_PORTS_PER_VM:-}"
 
 # Optional: Create apiserver konnectivity server and agent.
 ENABLE_EGRESS_VIA_KONNECTIVITY_SERVICE="${KUBE_ENABLE_EGRESS_VIA_KONNECTIVITY_SERVICE:-false}"

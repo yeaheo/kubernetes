@@ -147,6 +147,43 @@ function Dump-DebugInfoToConsole {
   } Catch { }
 }
 
+# Converts the kube-env string in Yaml
+#
+# Returns: a PowerShell Hashtable object containing the key-value pairs from
+#   kube-env.
+function ConvertFrom-Yaml-KubeEnv {
+  param (
+    [parameter(Mandatory=$true)] [string]$kube_env_str
+  )
+  $kube_env_table = @{}
+  $currentLine = $null
+  switch -regex (${kube_env_str} -split '\r?\n') {
+      '^(\S.*)' {
+          # record start pattern, line that doesn't start with a whitespace
+          if ($null -ne $currentLine) {
+              $key, $val = $currentLine -split ":",2
+              $kube_env_table[$key] = $val.Trim("'", " ", "`"")
+          }
+          $currentLine = $matches.1
+          continue
+      }
+
+      '^(\s+.*)' {
+          # line that start with whitespace
+          $currentLine += $matches.1
+          continue
+      }
+  }
+
+  # Handle the last line if any
+  if ($currentLine) {
+      $key, $val = $currentLine -split ":",2
+      $kube_env_table[$key] = $val.Trim("'", " ", "`"")
+  }
+
+  return ${kube_env_table}
+}
+
 # Fetches the kube-env from the instance metadata.
 #
 # Returns: a PowerShell Hashtable object containing the key-value pairs from
@@ -157,13 +194,13 @@ function Fetch-KubeEnv {
   #   ${kube_env} = Get-InstanceMetadataAttribute 'kube-env'
   # or:
   #   ${kube_env} = [IO.File]::ReadAllText(".\kubeEnv.txt")
-  # ${kube_env_table} = ConvertFrom-Yaml ${kube_env}
+  # ${kube_env_table} = ConvertFrom-Yaml-KubeEnv ${kube_env}
   # ${kube_env_table}
   # ${kube_env_table}.GetType()
 
   # The type of kube_env is a powershell String.
   $kube_env = Get-InstanceMetadataAttribute 'kube-env'
-  $kube_env_table = ConvertFrom-Yaml ${kube_env}
+  $kube_env_table = ConvertFrom-Yaml-KubeEnv ${kube_env}
   return ${kube_env_table}
 }
 
@@ -238,10 +275,6 @@ function Set-PrerequisiteOptions {
   # Use TLS 1.2: needed for Invoke-WebRequest downloads from github.com.
   [Net.ServicePointManager]::SecurityProtocol = `
       [Net.SecurityProtocolType]::Tls12
-
-  # https://github.com/cloudbase/powershell-yaml
-  Log-Output "Installing powershell-yaml module from external repo"
-  Install-Module -Name powershell-yaml -Force
 }
 
 # Creates directories where other functions in this module will read and write
@@ -636,6 +669,40 @@ function Add_InitialHnsNetwork {
       -Verbose
 }
 
+# Get the network in uint32 for the given cidr
+function Get_NetworkDecimal_From_CIDR([string] $cidr) {
+  $network, [int]$subnetlen = $cidr.Split('/')
+  $decimal_network = ConvertTo_DecimalIP($network)
+  return $decimal_network
+}
+
+# Get gateway ip string (the first address) based on pod cidr.
+# For Windows nodes the pod gateway IP address is the first address in the pod
+# CIDR for the host.
+function Get_Gateway_From_CIDR([string] $cidr) {
+  $network=Get_NetworkDecimal_From_CIDR($cidr)
+  $gateway=ConvertTo_DottedDecimalIP($network+1)
+  return $gateway
+}
+
+# Get endpoint gateway ip string (the second address) based on pod cidr.
+# For Windows nodes the pod gateway IP address is the first address in the pod
+# CIDR for the host, but from inside containers it's the second address.
+function Get_Endpoint_Gateway_From_CIDR([string] $cidr) {
+  $network=Get_NetworkDecimal_From_CIDR($cidr)
+  $gateway=ConvertTo_DottedDecimalIP($network+2)
+  return $gateway
+}
+
+# Get pod IP range start based (the third address) on pod cidr
+# We reserve the first two in the cidr range for gateways. Start the cidr
+# range from the third so that IPAM does not allocate those IPs to pods.
+function Get_PodIP_Range_Start([string] $cidr) {
+  $network=Get_NetworkDecimal_From_CIDR($cidr)
+  $start=ConvertTo_DottedDecimalIP($network+3)
+  return $start
+}
+
 # Configures HNS on the Windows node to enable Kubernetes networking:
 #   - Creates the "management" interface associated with an initial HNS network.
 #   - Creates the HNS network $env:KUBE_NETWORK for pod networking.
@@ -651,12 +718,8 @@ function Configure-HostNetworkingService {
 
   Add_InitialHnsNetwork
 
-  # For Windows nodes the pod gateway IP address is the .1 address in the pod
-  # CIDR for the host, but from inside containers it's the .2 address.
-  $pod_gateway = `
-      ${env:POD_CIDR}.substring(0, ${env:POD_CIDR}.lastIndexOf('.')) + '.1'
-  $pod_endpoint_gateway = `
-      ${env:POD_CIDR}.substring(0, ${env:POD_CIDR}.lastIndexOf('.')) + '.2'
+  $pod_gateway = Get_Gateway_From_CIDR(${env:POD_CIDR})
+  $pod_endpoint_gateway = Get_Endpoint_Gateway_From_CIDR(${env:POD_CIDR})
   Log-Output ("Setting up Windows node HNS networking: " +
               "podCidr = ${env:POD_CIDR}, podGateway = ${pod_gateway}, " +
               "podEndpointGateway = ${pod_endpoint_gateway}")
@@ -788,18 +851,18 @@ Import-Module -Name $modulePath'.replace('K8S_DIR', ${env:K8S_DIR})
 #   CLUSTER_IP_RANGE
 #   SERVICE_CLUSTER_IP_RANGE
 function Configure-CniNetworking {
-  $CNI_RELEASE_VERSION = 'v0.8.0'
+  $CNI_RELEASE_VERSION = 'v0.8.2-gke.0'
   if ((ShouldWrite-File ${env:CNI_DIR}\win-bridge.exe) -or
       (ShouldWrite-File ${env:CNI_DIR}\host-local.exe)) {
     $tmp_dir = 'C:\cni_tmp'
     New-Item $tmp_dir -ItemType 'directory' -Force | Out-Null
 
-    $release_url = ('https://github.com/containernetworking/plugins/releases/' +
-        'download/' + $CNI_RELEASE_VERSION + '/')
+    $release_url = ('https://www.googleapis.com/storage/v1/b/gke-release/o/cni-plugins%2f' +
+        $CNI_RELEASE_VERSION + '%2f')
     $sha_url = ($release_url +
-        "cni-plugins-windows-amd64-$CNI_RELEASE_VERSION.tgz.sha1")
+        "cni-plugins-windows-amd64-$CNI_RELEASE_VERSION.tgz.sha1?alt=media")
     $tgz_url = ($release_url +
-        "cni-plugins-windows-amd64-$CNI_RELEASE_VERSION.tgz")
+        "cni-plugins-windows-amd64-$CNI_RELEASE_VERSION.tgz?alt=media")
     MustDownload-File -URLs $sha_url -OutFile $tmp_dir\cni-plugins.sha1
     $sha1_val = ($(Get-Content $tmp_dir\cni-plugins.sha1) -split ' ',2)[0]
     MustDownload-File `
@@ -833,10 +896,7 @@ function Configure-CniNetworking {
   Log-Output ("using mgmt IP ${mgmt_ip} and mgmt subnet ${mgmt_subnet} for " +
               "CNI config")
 
-  # We reserve .1 and .2 for gateways. Start the CIDR range from ".3" so that
-  # IPAM does not allocate those IPs to pods.
-  $cidr_range_start = `
-      ${env:POD_CIDR}.substring(0, ${env:POD_CIDR}.lastIndexOf('.')) + '.3'
+  $cidr_range_start = Get_PodIP_Range_Start(${env:POD_CIDR})
 
   # Explanation of the CNI config values:
   #   CLUSTER_CIDR: the cluster CIDR from which pod CIDRs are allocated.

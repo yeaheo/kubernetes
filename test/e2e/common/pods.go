@@ -20,13 +20,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/net/websocket"
 
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -158,6 +159,22 @@ func getRestartDelay(podClient *framework.PodClient, podName string, containerNa
 	return 0, fmt.Errorf("timeout getting pod restart delay")
 }
 
+// expectNoErrorWithRetries checks if an error occurs with the given retry count.
+func expectNoErrorWithRetries(fn func() error, maxRetries int, explain ...interface{}) {
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		err = fn()
+		if err == nil {
+			return
+		}
+		framework.Logf("(Attempt %d of %d) Unexpected error occurred: %v", i+1, maxRetries, err)
+	}
+	if err != nil {
+		debug.PrintStack()
+	}
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), explain...)
+}
+
 var _ = framework.KubeDescribe("Pods", func() {
 	f := framework.NewDefaultFramework("pods")
 	var podClient *framework.PodClient
@@ -263,7 +280,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 		select {
 		case <-listCompleted:
 			select {
-			case event, _ := <-w.ResultChan():
+			case event := <-w.ResultChan():
 				if event.Type != watch.Added {
 					framework.Failf("Failed to observe pod creation: %v", event)
 				}
@@ -313,7 +330,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 		timer := time.After(framework.DefaultPodDeletionTimeout)
 		for !deleted {
 			select {
-			case event, _ := <-w.ResultChan():
+			case event := <-w.ResultChan():
 				switch event.Type {
 				case watch.Deleted:
 					lastPod = event.Object.(*v1.Pod)
@@ -526,7 +543,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 			"FOOSERVICE_PORT_8765_TCP=",
 			"FOOSERVICE_PORT_8765_TCP_ADDR=",
 		}
-		framework.ExpectNoErrorWithRetries(func() error {
+		expectNoErrorWithRetries(func() error {
 			return f.MatchContainerOutput(pod, containerName, expectedVars, gomega.ContainSubstring)
 		}, maxRetries, "Container should have service environment variables set")
 	})
@@ -604,10 +621,10 @@ var _ = framework.KubeDescribe("Pods", func() {
 				buf.Write(msg[1:])
 			}
 			if buf.Len() == 0 {
-				return fmt.Errorf("Unexpected output from server")
+				return fmt.Errorf("unexpected output from server")
 			}
 			if !strings.Contains(buf.String(), "remote execution test") {
-				return fmt.Errorf("Expected to find 'remote execution test' in %q", buf.String())
+				return fmt.Errorf("expected to find 'remote execution test' in %q", buf.String())
 			}
 			return nil
 		}, time.Minute, 10*time.Second).Should(gomega.BeNil())

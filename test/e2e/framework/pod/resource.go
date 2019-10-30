@@ -42,7 +42,6 @@ import (
 )
 
 // TODO: Move to its own subpkg.
-// expectNoErrorWithRetries to their own subpackages within framework.
 // expectNoError checks if "err" is set, and if so, fails assertion while logging the error.
 func expectNoError(err error, explain ...interface{}) {
 	expectNoErrorWithOffset(1, err, explain...)
@@ -173,28 +172,6 @@ func CountRemainingPods(c clientset.Interface, namespace string) (int, int, erro
 		}
 	}
 	return numPods, missingTimestamp, nil
-}
-
-// Initialized checks the state of all init containers in the pod.
-func Initialized(pod *v1.Pod) (ok bool, failed bool, err error) {
-	allInit := true
-	initFailed := false
-	for _, s := range pod.Status.InitContainerStatuses {
-		switch {
-		case initFailed && s.State.Waiting == nil:
-			return allInit, initFailed, fmt.Errorf("container %s is after a failed container but isn't waiting", s.Name)
-		case allInit && s.State.Waiting == nil:
-			return allInit, initFailed, fmt.Errorf("container %s is after an initializing container but isn't waiting", s.Name)
-		case s.State.Terminated == nil:
-			allInit = false
-		case s.State.Terminated.ExitCode != 0:
-			allInit = false
-			initFailed = true
-		case !s.Ready:
-			return allInit, initFailed, fmt.Errorf("container %s initialized but isn't marked as ready", s.Name)
-		}
-	}
-	return allInit, initFailed, nil
 }
 
 func podRunning(c clientset.Interface, podName, namespace string) wait.ConditionFunc {
@@ -464,17 +441,6 @@ func NewExecPodSpec(ns, name string, hostNetwork bool) *v1.Pod {
 	return pod
 }
 
-// LaunchHostExecPod launches a hostexec pod in the given namespace and waits
-// until it's Running
-func LaunchHostExecPod(client clientset.Interface, ns, name string) *v1.Pod {
-	hostExecPod := NewExecPodSpec(ns, name, true)
-	pod, err := client.CoreV1().Pods(ns).Create(hostExecPod)
-	expectNoError(err)
-	err = WaitForPodRunningInNamespace(client, pod)
-	expectNoError(err)
-	return pod
-}
-
 // newExecPodSpec returns the pod spec of exec pod
 func newExecPodSpec(ns, generateName string) *v1.Pod {
 	immediate := int64(0)
@@ -519,32 +485,6 @@ func CreateExecPodOrFail(client clientset.Interface, ns, generateName string, tw
 	})
 	expectNoError(err)
 	return execPod
-}
-
-// CreatePodOrFail creates a pod with the specified containerPorts.
-func CreatePodOrFail(c clientset.Interface, ns, name string, labels map[string]string, containerPorts []v1.ContainerPort) {
-	ginkgo.By(fmt.Sprintf("Creating pod %s in namespace %s", name, ns))
-	pod := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
-			Labels: labels,
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:  "pause",
-					Image: imageutils.GetE2EImage(imageutils.Agnhost),
-					Args:  []string{"pause"},
-					Ports: containerPorts,
-					// Add a dummy environment variable to work around a docker issue.
-					// https://github.com/docker/docker/issues/14203
-					Env: []v1.EnvVar{{Name: "FOO", Value: " "}},
-				},
-			},
-		},
-	}
-	_, err := c.CoreV1().Pods(ns).Create(pod)
-	expectNoError(err, "failed to create pod %s in namespace %s", name, ns)
 }
 
 // CheckPodsRunningReady returns whether all pods whose names are listed in
