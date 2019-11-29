@@ -25,6 +25,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/priorities"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultpodtopologyspread"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/imagelocality"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/interpodaffinity"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeaffinity"
@@ -36,6 +37,8 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeunschedulable"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodevolumelimits"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/podtopologyspread"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/requestedtocapacityratio"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/serviceaffinity"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/tainttoleration"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/volumebinding"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/volumerestrictions"
@@ -54,6 +57,7 @@ type RegistryArgs struct {
 // plugins can register additional plugins through the WithFrameworkOutOfTreeRegistry option.
 func NewDefaultRegistry(args *RegistryArgs) framework.Registry {
 	return framework.Registry{
+		defaultpodtopologyspread.Name:        defaultpodtopologyspread.New,
 		imagelocality.Name:                   imagelocality.New,
 		tainttoleration.Name:                 tainttoleration.New,
 		nodename.Name:                        nodename.New,
@@ -78,6 +82,8 @@ func NewDefaultRegistry(args *RegistryArgs) framework.Registry {
 		nodevolumelimits.CinderName:    nodevolumelimits.NewCinder,
 		interpodaffinity.Name:          interpodaffinity.New,
 		nodelabel.Name:                 nodelabel.New,
+		requestedtocapacityratio.Name:  requestedtocapacityratio.New,
+		serviceaffinity.Name:           serviceaffinity.New,
 	}
 }
 
@@ -89,6 +95,10 @@ type ConfigProducerArgs struct {
 	Weight int32
 	// NodeLabelArgs is the args for the NodeLabel plugin.
 	NodeLabelArgs *nodelabel.Args
+	// RequestedToCapacityRatioArgs is the args for the RequestedToCapacityRatio plugin.
+	RequestedToCapacityRatioArgs *requestedtocapacityratio.Args
+	// ServiceAffinityArgs is the args for the ServiceAffinity plugin.
+	ServiceAffinityArgs *serviceaffinity.Args
 }
 
 // ConfigProducer produces a framework's configuration.
@@ -197,23 +207,25 @@ func NewDefaultConfigProducerRegistry() *ConfigProducerRegistry {
 			plugins.Filter = appendToPluginSet(plugins.Filter, podtopologyspread.Name, nil)
 			return
 		})
-	registry.RegisterPredicate(nodelabel.Name,
+	registry.RegisterPredicate(predicates.CheckNodeLabelPresencePred,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Filter = appendToPluginSet(plugins.Filter, nodelabel.Name, nil)
-			encoding, err := json.Marshal(args.NodeLabelArgs)
-			if err != nil {
-				klog.Fatalf("Failed to marshal %+v", args.NodeLabelArgs)
-				return
-			}
-			config := config.PluginConfig{
-				Name: nodelabel.Name,
-				Args: runtime.Unknown{Raw: encoding},
-			}
-			pluginConfig = append(pluginConfig, config)
+			pluginConfig = append(pluginConfig, makePluginConfig(nodelabel.Name, args.NodeLabelArgs))
+			return
+		})
+	registry.RegisterPredicate(predicates.CheckServiceAffinityPred,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Filter = appendToPluginSet(plugins.Filter, serviceaffinity.Name, nil)
+			pluginConfig = append(pluginConfig, makePluginConfig(serviceaffinity.Name, args.ServiceAffinityArgs))
 			return
 		})
 
 	// Register Priorities.
+	registry.RegisterPriority(priorities.SelectorSpreadPriority,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, defaultpodtopologyspread.Name, &args.Weight)
+			return
+		})
 	registry.RegisterPriority(priorities.TaintTolerationPriority,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Score = appendToPluginSet(plugins.Score, tainttoleration.Name, &args.Weight)
@@ -229,30 +241,55 @@ func NewDefaultConfigProducerRegistry() *ConfigProducerRegistry {
 			plugins.Score = appendToPluginSet(plugins.Score, imagelocality.Name, &args.Weight)
 			return
 		})
+	registry.RegisterPriority(priorities.InterPodAffinityPriority,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, interpodaffinity.Name, &args.Weight)
+			return
+		})
 	registry.RegisterPriority(priorities.NodePreferAvoidPodsPriority,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Score = appendToPluginSet(plugins.Score, nodepreferavoidpods.Name, &args.Weight)
 			return
 		})
-
 	registry.RegisterPriority(priorities.MostRequestedPriority,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Score = appendToPluginSet(plugins.Score, noderesources.MostAllocatedName, &args.Weight)
 			return
 		})
-
 	registry.RegisterPriority(priorities.BalancedResourceAllocation,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Score = appendToPluginSet(plugins.Score, noderesources.BalancedAllocationName, &args.Weight)
 			return
 		})
-
 	registry.RegisterPriority(priorities.LeastRequestedPriority,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
 			plugins.Score = appendToPluginSet(plugins.Score, noderesources.LeastAllocatedName, &args.Weight)
 			return
 		})
+	registry.RegisterPriority(priorities.EvenPodsSpreadPriority,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, podtopologyspread.Name, &args.Weight)
+			return
+		})
+	registry.RegisterPriority(requestedtocapacityratio.Name,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, requestedtocapacityratio.Name, &args.Weight)
+			pluginConfig = append(pluginConfig, makePluginConfig(requestedtocapacityratio.Name, args.RequestedToCapacityRatioArgs))
+			return
+		})
 
+	registry.RegisterPriority(nodelabel.Name,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, nodelabel.Name, &args.Weight)
+			pluginConfig = append(pluginConfig, makePluginConfig(nodelabel.Name, args.NodeLabelArgs))
+			return
+		})
+	registry.RegisterPriority(serviceaffinity.Name,
+		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			plugins.Score = appendToPluginSet(plugins.Score, serviceaffinity.Name, &args.Weight)
+			pluginConfig = append(pluginConfig, makePluginConfig(serviceaffinity.Name, args.ServiceAffinityArgs))
+			return
+		})
 	return registry
 }
 
@@ -284,4 +321,17 @@ func appendToPluginSet(set *config.PluginSet, name string, weight *int32) *confi
 	}
 	set.Enabled = append(set.Enabled, cfg)
 	return set
+}
+
+func makePluginConfig(pluginName string, args interface{}) config.PluginConfig {
+	encoding, err := json.Marshal(args)
+	if err != nil {
+		klog.Fatal(fmt.Errorf("Failed to marshal %+v: %v", args, err))
+		return config.PluginConfig{}
+	}
+	config := config.PluginConfig{
+		Name: pluginName,
+		Args: runtime.Unknown{Raw: encoding},
+	}
+	return config
 }

@@ -18,6 +18,7 @@ package validation
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +41,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -55,7 +56,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeFQDN),
+				AddressType: discovery.AddressTypeFQDN,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -70,7 +71,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("tcp"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -87,11 +88,39 @@ func TestValidateEndpointSlice(t *testing.T) {
 				}},
 			},
 		},
+		"app-protocols": {
+			expectedErrors: 0,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIP,
+				Ports: []discovery.EndpointPort{{
+					Name:        utilpointer.StringPtr("one"),
+					Protocol:    protocolPtr(api.ProtocolTCP),
+					AppProtocol: utilpointer.StringPtr("HTTP"),
+				}, {
+					Name:        utilpointer.StringPtr("two"),
+					Protocol:    protocolPtr(api.ProtocolTCP),
+					AppProtocol: utilpointer.StringPtr("https"),
+				}, {
+					Name:        utilpointer.StringPtr("three"),
+					Protocol:    protocolPtr(api.ProtocolTCP),
+					AppProtocol: utilpointer.StringPtr("my-protocol"),
+				}, {
+					Name:        utilpointer.StringPtr("four"),
+					Protocol:    protocolPtr(api.ProtocolTCP),
+					AppProtocol: utilpointer.StringPtr("example.com/custom-protocol"),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+					Hostname:  utilpointer.StringPtr("valid-123"),
+				}},
+			},
+		},
 		"empty-port-name": {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr(""),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -104,11 +133,25 @@ func TestValidateEndpointSlice(t *testing.T) {
 				}},
 			},
 		},
+		"long-port-name": {
+			expectedErrors: 0,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIPv4,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr(strings.Repeat("a", 63)),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+				}},
+			},
+		},
 		"empty-ports-and-endpoints": {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports:       []discovery.EndpointPort{},
 				Endpoints:   []discovery.Endpoint{},
 			},
@@ -117,7 +160,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports:       generatePorts(1),
 				Endpoints:   generateEndpoints(maxEndpoints),
 			},
@@ -126,7 +169,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports:       generatePorts(maxPorts),
 			},
 		},
@@ -134,7 +177,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -148,7 +191,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -165,7 +208,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr(""),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -180,7 +223,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("aCapital"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -192,9 +235,21 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("almost_valid"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{},
+			},
+		},
+		"bad-port-name-length": {
+			expectedErrors: 1,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIPv4,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr(strings.Repeat("a", 64)),
 					Protocol: protocolPtr(api.ProtocolTCP),
 				}},
 				Endpoints: []discovery.Endpoint{},
@@ -204,7 +259,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.Protocol("foo")),
@@ -215,7 +270,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports:       generatePorts(maxPorts + 1),
 			},
 		},
@@ -223,7 +278,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports:       generatePorts(1),
 				Endpoints:   generateEndpoints(maxEndpoints + 1),
 			},
@@ -232,7 +287,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -246,7 +301,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -256,25 +311,11 @@ func TestValidateEndpointSlice(t *testing.T) {
 				}},
 			},
 		},
-		"bad-address-type": {
-			expectedErrors: 1,
-			endpointSlice: &discovery.EndpointSlice{
-				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressType("other")),
-				Ports: []discovery.EndpointPort{{
-					Name:     utilpointer.StringPtr("http"),
-					Protocol: protocolPtr(api.ProtocolTCP),
-				}},
-				Endpoints: []discovery.Endpoint{{
-					Addresses: generateIPAddresses(1),
-				}},
-			},
-		},
 		"bad-topology-key": {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -289,7 +330,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -304,7 +345,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -322,7 +363,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 					Name:      "*&^",
 					Namespace: "foo",
 				},
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv4,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -337,7 +378,7 @@ func TestValidateEndpointSlice(t *testing.T) {
 			expectedErrors: 1,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIP,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -348,11 +389,41 @@ func TestValidateEndpointSlice(t *testing.T) {
 				}},
 			},
 		},
+		"bad-ipv4": {
+			expectedErrors: 2,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIPv4,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr("http"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: []string{"123.456.789.012", "2001:4860:4860::8888"},
+					Hostname:  utilpointer.StringPtr("valid-123"),
+				}},
+			},
+		},
+		"bad-ipv6": {
+			expectedErrors: 2,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIPv6,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr("http"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: []string{"123.456.789.012", "2001:4860:4860:defg"},
+					Hostname:  utilpointer.StringPtr("valid-123"),
+				}},
+			},
+		},
 		"bad-fqdns": {
 			expectedErrors: 4,
 			endpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeFQDN),
+				AddressType: discovery.AddressTypeFQDN,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr("http"),
 					Protocol: protocolPtr(api.ProtocolTCP),
@@ -363,17 +434,98 @@ func TestValidateEndpointSlice(t *testing.T) {
 				}},
 			},
 		},
+		"bad-app-protocol": {
+			expectedErrors: 1,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIP,
+				Ports: []discovery.EndpointPort{{
+					Name:        utilpointer.StringPtr("http"),
+					Protocol:    protocolPtr(api.ProtocolTCP),
+					AppProtocol: utilpointer.StringPtr("--"),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+					Hostname:  utilpointer.StringPtr("valid-123"),
+				}},
+			},
+		},
 		"empty-everything": {
 			expectedErrors: 3,
+			endpointSlice:  &discovery.EndpointSlice{},
+		},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			errs := ValidateEndpointSlice(testCase.endpointSlice, supportedAddressTypes.Union(deprecatedAddressTypes))
+			if len(errs) != testCase.expectedErrors {
+				t.Errorf("Expected %d errors, got %d errors: %v", testCase.expectedErrors, len(errs), errs)
+			}
+		})
+	}
+}
+
+func TestValidateEndpointSliceCreate(t *testing.T) {
+	standardMeta := metav1.ObjectMeta{
+		Name:      "hello",
+		Namespace: "world",
+	}
+
+	testCases := map[string]struct {
+		expectedErrors int
+		endpointSlice  *discovery.EndpointSlice
+	}{
+		"good-slice": {
+			expectedErrors: 0,
 			endpointSlice: &discovery.EndpointSlice{
-				AddressType: addressTypePtr(""),
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIPv4,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr("http"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+					Hostname:  utilpointer.StringPtr("valid-123"),
+				}},
+			},
+		},
+
+		// expected failures
+		"deprecated-address-type": {
+			expectedErrors: 1,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIP,
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr("http"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+				}},
+			},
+		},
+		"bad-address-type": {
+			expectedErrors: 1,
+			endpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressType("other"),
+				Ports: []discovery.EndpointPort{{
+					Name:     utilpointer.StringPtr("http"),
+					Protocol: protocolPtr(api.ProtocolTCP),
+				}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: generateIPAddresses(1),
+				}},
 			},
 		},
 	}
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			errs := ValidateEndpointSlice(testCase.endpointSlice)
+			errs := ValidateEndpointSliceCreate(testCase.endpointSlice)
 			if len(errs) != testCase.expectedErrors {
 				t.Errorf("Expected %d errors, got %d errors: %v", testCase.expectedErrors, len(errs), errs)
 			}
@@ -392,29 +544,40 @@ func TestValidateEndpointSliceUpdate(t *testing.T) {
 		"valid and identical slices": {
 			newEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv6,
 			},
 			oldEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIPv6,
 			},
 			expectedErrors: 0,
+		},
+		"deprecated address type": {
+			expectedErrors: 0,
+			newEndpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIP,
+			},
+			oldEndpointSlice: &discovery.EndpointSlice{
+				ObjectMeta:  standardMeta,
+				AddressType: discovery.AddressTypeIP,
+			},
 		},
 		"valid and identical slices with different address types": {
 			newEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIP,
 			},
 			oldEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressType("other")),
+				AddressType: discovery.AddressType("other"),
 			},
 			expectedErrors: 1,
 		},
 		"invalid slices with valid address types": {
 			newEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIP,
 				Ports: []discovery.EndpointPort{{
 					Name:     utilpointer.StringPtr(""),
 					Protocol: protocolPtr(api.Protocol("invalid")),
@@ -422,7 +585,7 @@ func TestValidateEndpointSliceUpdate(t *testing.T) {
 			},
 			oldEndpointSlice: &discovery.EndpointSlice{
 				ObjectMeta:  standardMeta,
-				AddressType: addressTypePtr(discovery.AddressTypeIP),
+				AddressType: discovery.AddressTypeIP,
 			},
 			expectedErrors: 1,
 		},
@@ -442,10 +605,6 @@ func TestValidateEndpointSliceUpdate(t *testing.T) {
 
 func protocolPtr(protocol api.Protocol) *api.Protocol {
 	return &protocol
-}
-
-func addressTypePtr(addressType discovery.AddressType) *discovery.AddressType {
-	return &addressType
 }
 
 func generatePorts(n int) []discovery.EndpointPort {

@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -40,19 +41,20 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	apitesting "k8s.io/kubernetes/pkg/api/testing"
+	kubefeatures "k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
-	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
-	latestschedulerapi "k8s.io/kubernetes/pkg/scheduler/api/latest"
-	"k8s.io/kubernetes/pkg/scheduler/apis/config"
+	schedulerapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
+	"k8s.io/kubernetes/pkg/scheduler/apis/config/scheme"
 	extenderv1 "k8s.io/kubernetes/pkg/scheduler/apis/extender/v1"
 	frameworkplugins "k8s.io/kubernetes/pkg/scheduler/framework/plugins"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodelabel"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/serviceaffinity"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	internalqueue "k8s.io/kubernetes/pkg/scheduler/internal/queue"
-	schedulerlisters "k8s.io/kubernetes/pkg/scheduler/listers"
 	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
+	nodeinfosnapshot "k8s.io/kubernetes/pkg/scheduler/nodeinfo/snapshot"
 )
 
 const (
@@ -84,28 +86,33 @@ func TestCreateFromConfig(t *testing.T) {
 	// Pre-register some predicate and priority functions
 	RegisterFitPredicate("PredicateOne", PredicateFunc)
 	RegisterFitPredicate("PredicateTwo", PredicateFunc)
-	RegisterPriorityFunction("PriorityOne", PriorityFunc, 1)
-	RegisterPriorityFunction("PriorityTwo", PriorityFunc, 1)
+	RegisterPriorityMapReduceFunction("PriorityOne", PriorityFunc, nil, 1)
+	RegisterPriorityMapReduceFunction("PriorityTwo", PriorityFunc, nil, 1)
 
 	configData = []byte(`{
 		"kind" : "Policy",
 		"apiVersion" : "v1",
 		"predicates" : [
 			{"name" : "TestZoneAffinity", "argument" : {"serviceAffinity" : {"labels" : ["zone"]}}},
+			{"name" : "TestZoneAffinity", "argument" : {"serviceAffinity" : {"labels" : ["foo"]}}},
 			{"name" : "TestRequireZone", "argument" : {"labelsPresence" : {"labels" : ["zone"], "presence" : true}}},
+			{"name" : "TestNoFooLabel", "argument" : {"labelsPresence" : {"labels" : ["foo"], "presence" : false}}},
 			{"name" : "PredicateOne"},
 			{"name" : "PredicateTwo"}
 		],
 		"priorities" : [
 			{"name" : "RackSpread", "weight" : 3, "argument" : {"serviceAntiAffinity" : {"label" : "rack"}}},
+			{"name" : "ZoneSpread", "weight" : 3, "argument" : {"serviceAntiAffinity" : {"label" : "zone"}}},
+			{"name" : "LabelPreference1", "weight" : 3, "argument" : {"labelPreference" : {"label" : "l1", "presence": true}}},
+			{"name" : "LabelPreference2", "weight" : 3, "argument" : {"labelPreference" : {"label" : "l2", "presence": false}}},
 			{"name" : "PriorityOne", "weight" : 2},
 			{"name" : "PriorityTwo", "weight" : 1}		]
 	}`)
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 
-	conf, err := factory.CreateFromConfig(policy)
+	sched, err := factory.CreateFromConfig(policy)
 	if err != nil {
 		t.Fatalf("CreateFromConfig failed: %v", err)
 	}
@@ -114,38 +121,53 @@ func TestCreateFromConfig(t *testing.T) {
 		t.Errorf("Wrong hardPodAffinitySymmetricWeight, ecpected: %d, got: %d", v1.DefaultHardPodAffinitySymmetricWeight, hpa)
 	}
 
-	// Verify that custom predicates are converted to framework plugins.
-	if !pluginExists(nodelabel.Name, "FilterPlugin", conf) {
-		t.Error("NodeLabel plugin not exist in framework.")
-	}
-	// Verify that the policy config is converted to plugin config for custom predicates.
-	nodeLabelConfig := findPluginConfig(nodelabel.Name, conf)
-	encoding, err := json.Marshal(nodeLabelConfig)
-	if err != nil {
-		t.Errorf("Failed to marshal %+v: %v", nodeLabelConfig, err)
-	}
-	want := `{"Name":"NodeLabel","Args":{"labels":["zone"],"presence":true}}`
-	if string(encoding) != want {
-		t.Errorf("Config for NodeLabel plugin mismatch. got: %v, want: %v", string(encoding), want)
-	}
+	// Verify that node label predicate/priority are converted to framework plugins.
+	wantArgs := `{"Name":"NodeLabel","Args":{"presentLabels":["zone"],"absentLabels":["foo"],"presentLabelsPreference":["l1"],"absentLabelsPreference":["l2"]}}`
+	verifyPluginConvertion(t, nodelabel.Name, []string{"FilterPlugin", "ScorePlugin"}, sched, 6, wantArgs)
+	// Verify that service affinity custom predicate/priority is converted to framework plugin.
+	wantArgs = `{"Name":"ServiceAffinity","Args":{"labels":["zone","foo"],"antiAffinityLabelsPreference":["rack","zone"]}}`
+	verifyPluginConvertion(t, serviceaffinity.Name, []string{"FilterPlugin", "ScorePlugin"}, sched, 6, wantArgs)
 }
 
-func pluginExists(name, extensionPoint string, schedConf *Config) bool {
-	for _, pl := range schedConf.Framework.ListPlugins()[extensionPoint] {
-		if pl.Name == name {
-			return true
+func verifyPluginConvertion(t *testing.T, name string, extentionPoints []string, sched *Scheduler, wantWeight int32, wantArgs string) {
+	for _, extensionPoint := range extentionPoints {
+		plugin, ok := findPlugin(name, extensionPoint, sched)
+		if !ok {
+			t.Fatalf("%q plugin does not exist in framework.", name)
+		}
+		if extensionPoint == "ScorePlugin" {
+			if plugin.Weight != wantWeight {
+				t.Errorf("Wrong weight. Got: %v, want: %v", plugin.Weight, wantWeight)
+			}
+		}
+		// Verify that the policy config is converted to plugin config.
+		pluginConfig := findPluginConfig(name, sched)
+		encoding, err := json.Marshal(pluginConfig)
+		if err != nil {
+			t.Errorf("Failed to marshal %+v: %v", pluginConfig, err)
+		}
+		if string(encoding) != wantArgs {
+			t.Errorf("Config for %v plugin mismatch. got: %v, want: %v", name, string(encoding), wantArgs)
 		}
 	}
-	return false
 }
 
-func findPluginConfig(name string, schedConf *Config) config.PluginConfig {
-	for _, c := range schedConf.PluginConfig {
+func findPlugin(name, extensionPoint string, sched *Scheduler) (schedulerapi.Plugin, bool) {
+	for _, pl := range sched.Framework.ListPlugins()[extensionPoint] {
+		if pl.Name == name {
+			return pl, true
+		}
+	}
+	return schedulerapi.Plugin{}, false
+}
+
+func findPluginConfig(name string, sched *Scheduler) schedulerapi.PluginConfig {
+	for _, c := range sched.PluginConfig {
 		if c.Name == name {
 			return c
 		}
 	}
-	return config.PluginConfig{}
+	return schedulerapi.PluginConfig{}
 }
 
 func TestCreateFromConfigWithHardPodAffinitySymmetricWeight(t *testing.T) {
@@ -160,8 +182,8 @@ func TestCreateFromConfigWithHardPodAffinitySymmetricWeight(t *testing.T) {
 	// Pre-register some predicate and priority functions
 	RegisterFitPredicate("PredicateOne", PredicateFunc)
 	RegisterFitPredicate("PredicateTwo", PredicateFunc)
-	RegisterPriorityFunction("PriorityOne", PriorityFunc, 1)
-	RegisterPriorityFunction("PriorityTwo", PriorityFunc, 1)
+	RegisterPriorityMapReduceFunction("PriorityOne", PriorityFunc, nil, 1)
+	RegisterPriorityMapReduceFunction("PriorityTwo", PriorityFunc, nil, 1)
 
 	configData = []byte(`{
 		"kind" : "Policy",
@@ -179,7 +201,7 @@ func TestCreateFromConfigWithHardPodAffinitySymmetricWeight(t *testing.T) {
 		],
 		"hardPodAffinitySymmetricWeight" : 10
 	}`)
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 	factory.CreateFromConfig(policy)
@@ -199,7 +221,7 @@ func TestCreateFromEmptyConfig(t *testing.T) {
 	factory := newConfigFactory(client, v1.DefaultHardPodAffinitySymmetricWeight, stopCh)
 
 	configData = []byte(`{}`)
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 
@@ -216,16 +238,16 @@ func TestCreateFromConfigWithUnspecifiedPredicatesOrPriorities(t *testing.T) {
 	factory := newConfigFactory(client, v1.DefaultHardPodAffinitySymmetricWeight, stopCh)
 
 	RegisterFitPredicate("PredicateOne", PredicateFunc)
-	RegisterPriorityFunction("PriorityOne", PriorityFunc, 1)
+	RegisterPriorityMapReduceFunction("PriorityOne", PriorityFunc, nil, 1)
 
-	RegisterAlgorithmProvider(DefaultProvider, sets.NewString("PredicateOne"), sets.NewString("PriorityOne"))
+	RegisterAlgorithmProvider(schedulerapi.SchedulerDefaultProviderName, sets.NewString("PredicateOne"), sets.NewString("PriorityOne"))
 
 	configData := []byte(`{
 		"kind" : "Policy",
 		"apiVersion" : "v1"
 	}`)
 	var policy schedulerapi.Policy
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Fatalf("Invalid configuration: %v", err)
 	}
 
@@ -234,10 +256,10 @@ func TestCreateFromConfigWithUnspecifiedPredicatesOrPriorities(t *testing.T) {
 		t.Fatalf("Failed to create scheduler from configuration: %v", err)
 	}
 	if _, found := c.Algorithm.Predicates()["PredicateOne"]; !found {
-		t.Errorf("Expected predicate PredicateOne from %q", DefaultProvider)
+		t.Errorf("Expected predicate PredicateOne from %q", schedulerapi.SchedulerDefaultProviderName)
 	}
 	if len(c.Algorithm.Prioritizers()) != 1 || c.Algorithm.Prioritizers()[0].Name != "PriorityOne" {
-		t.Errorf("Expected priority PriorityOne from %q", DefaultProvider)
+		t.Errorf("Expected priority PriorityOne from %q", schedulerapi.SchedulerDefaultProviderName)
 	}
 }
 
@@ -251,9 +273,9 @@ func TestCreateFromConfigWithEmptyPredicatesOrPriorities(t *testing.T) {
 	factory := newConfigFactory(client, v1.DefaultHardPodAffinitySymmetricWeight, stopCh)
 
 	RegisterFitPredicate("PredicateOne", PredicateFunc)
-	RegisterPriorityFunction("PriorityOne", PriorityFunc, 1)
+	RegisterPriorityMapReduceFunction("PriorityOne", PriorityFunc, nil, 1)
 
-	RegisterAlgorithmProvider(DefaultProvider, sets.NewString("PredicateOne"), sets.NewString("PriorityOne"))
+	RegisterAlgorithmProvider(schedulerapi.SchedulerDefaultProviderName, sets.NewString("PredicateOne"), sets.NewString("PriorityOne"))
 
 	configData := []byte(`{
 		"kind" : "Policy",
@@ -262,7 +284,7 @@ func TestCreateFromConfigWithEmptyPredicatesOrPriorities(t *testing.T) {
 		"priorities" : []
 	}`)
 	var policy schedulerapi.Policy
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Fatalf("Invalid configuration: %v", err)
 	}
 
@@ -278,12 +300,12 @@ func TestCreateFromConfigWithEmptyPredicatesOrPriorities(t *testing.T) {
 	}
 }
 
-func PredicateFunc(pod *v1.Pod, meta predicates.PredicateMetadata, nodeInfo *schedulernodeinfo.NodeInfo) (bool, []predicates.PredicateFailureReason, error) {
+func PredicateFunc(pod *v1.Pod, meta predicates.Metadata, nodeInfo *schedulernodeinfo.NodeInfo) (bool, []predicates.PredicateFailureReason, error) {
 	return true, nil, nil
 }
 
-func PriorityFunc(pod *v1.Pod, sharedLister schedulerlisters.SharedLister, nodes []*v1.Node) (framework.NodeScoreList, error) {
-	return []framework.NodeScore{}, nil
+func PriorityFunc(pod *v1.Pod, meta interface{}, nodeInfo *schedulernodeinfo.NodeInfo) (framework.NodeScore, error) {
+	return framework.NodeScore{}, nil
 }
 
 func TestDefaultErrorFunc(t *testing.T) {
@@ -493,12 +515,12 @@ func TestInvalidFactoryArgs(t *testing.T) {
 		{
 			name:                           "symmetric weight below range",
 			hardPodAffinitySymmetricWeight: -1,
-			expectErr:                      "invalid hardPodAffinitySymmetricWeight: -1, must be in the range 0-100",
+			expectErr:                      "invalid hardPodAffinitySymmetricWeight: -1, must be in the range [0-100]",
 		},
 		{
 			name:                           "symmetric weight above range",
 			hardPodAffinitySymmetricWeight: 101,
-			expectErr:                      "invalid hardPodAffinitySymmetricWeight: 101, must be in the range 0-100",
+			expectErr:                      "invalid hardPodAffinitySymmetricWeight: 101, must be in the range [0-100]",
 		},
 	}
 
@@ -520,32 +542,31 @@ func newConfigFactoryWithFrameworkRegistry(
 	client clientset.Interface, hardPodAffinitySymmetricWeight int32, stopCh <-chan struct{},
 	registry framework.Registry, pluginConfigProducerRegistry *frameworkplugins.ConfigProducerRegistry) *Configurator {
 	informerFactory := informers.NewSharedInformerFactory(client, 0)
-	return NewConfigFactory(&ConfigFactoryArgs{
-		Client:                         client,
-		InformerFactory:                informerFactory,
-		NodeInformer:                   informerFactory.Core().V1().Nodes(),
-		PodInformer:                    informerFactory.Core().V1().Pods(),
-		PvInformer:                     informerFactory.Core().V1().PersistentVolumes(),
-		PvcInformer:                    informerFactory.Core().V1().PersistentVolumeClaims(),
-		ReplicationControllerInformer:  informerFactory.Core().V1().ReplicationControllers(),
-		ReplicaSetInformer:             informerFactory.Apps().V1().ReplicaSets(),
-		StatefulSetInformer:            informerFactory.Apps().V1().StatefulSets(),
-		ServiceInformer:                informerFactory.Core().V1().Services(),
-		PdbInformer:                    informerFactory.Policy().V1beta1().PodDisruptionBudgets(),
-		StorageClassInformer:           informerFactory.Storage().V1().StorageClasses(),
-		CSINodeInformer:                informerFactory.Storage().V1beta1().CSINodes(),
-		HardPodAffinitySymmetricWeight: hardPodAffinitySymmetricWeight,
-		DisablePreemption:              disablePodPreemption,
-		PercentageOfNodesToScore:       schedulerapi.DefaultPercentageOfNodesToScore,
-		BindTimeoutSeconds:             bindTimeoutSeconds,
-		PodInitialBackoffSeconds:       podInitialBackoffDurationSeconds,
-		PodMaxBackoffSeconds:           podMaxBackoffDurationSeconds,
-		StopCh:                         stopCh,
-		Registry:                       registry,
-		Plugins:                        nil,
-		PluginConfig:                   []config.PluginConfig{},
-		PluginConfigProducerRegistry:   pluginConfigProducerRegistry,
-	})
+	snapshot := nodeinfosnapshot.NewEmptySnapshot()
+	return &Configurator{
+		client:                         client,
+		informerFactory:                informerFactory,
+		podInformer:                    informerFactory.Core().V1().Pods(),
+		hardPodAffinitySymmetricWeight: hardPodAffinitySymmetricWeight,
+		disablePreemption:              disablePodPreemption,
+		percentageOfNodesToScore:       schedulerapi.DefaultPercentageOfNodesToScore,
+		bindTimeoutSeconds:             bindTimeoutSeconds,
+		podInitialBackoffSeconds:       podInitialBackoffDurationSeconds,
+		podMaxBackoffSeconds:           podMaxBackoffDurationSeconds,
+		StopEverything:                 stopCh,
+		enableNonPreempting:            utilfeature.DefaultFeatureGate.Enabled(kubefeatures.NonPreemptingPriority),
+		registry:                       registry,
+		plugins:                        nil,
+		pluginConfig:                   []schedulerapi.PluginConfig{},
+		pluginConfigProducerRegistry:   pluginConfigProducerRegistry,
+		nodeInfoSnapshot:               snapshot,
+		algorithmFactoryArgs: AlgorithmFactoryArgs{
+			SharedLister:                   snapshot,
+			InformerFactory:                informerFactory,
+			HardPodAffinitySymmetricWeight: hardPodAffinitySymmetricWeight,
+		},
+		configProducerArgs: &frameworkplugins.ConfigProducerArgs{},
+	}
 }
 
 func newConfigFactory(
@@ -719,34 +740,34 @@ func TestCreateWithFrameworkPlugins(t *testing.T) {
 		PriorityToConfigProducer:  make(map[string]frameworkplugins.ConfigProducer),
 	}
 	configProducerRegistry.RegisterPredicate(predicateOneName,
-		func(_ frameworkplugins.ConfigProducerArgs) (config.Plugins, []config.PluginConfig) {
-			return config.Plugins{
-				Filter: &config.PluginSet{
-					Enabled: []config.Plugin{
+		func(_ frameworkplugins.ConfigProducerArgs) (schedulerapi.Plugins, []schedulerapi.PluginConfig) {
+			return schedulerapi.Plugins{
+				Filter: &schedulerapi.PluginSet{
+					Enabled: []schedulerapi.Plugin{
 						{Name: filterOneName}}}}, nil
 		})
 
 	configProducerRegistry.RegisterPredicate(predicateTwoName,
-		func(_ frameworkplugins.ConfigProducerArgs) (config.Plugins, []config.PluginConfig) {
-			return config.Plugins{
-				Filter: &config.PluginSet{
-					Enabled: []config.Plugin{
+		func(_ frameworkplugins.ConfigProducerArgs) (schedulerapi.Plugins, []schedulerapi.PluginConfig) {
+			return schedulerapi.Plugins{
+				Filter: &schedulerapi.PluginSet{
+					Enabled: []schedulerapi.Plugin{
 						{Name: filterTwoName}}}}, nil
 		})
 
 	configProducerRegistry.RegisterPriority(priorityOneName,
-		func(args frameworkplugins.ConfigProducerArgs) (config.Plugins, []config.PluginConfig) {
-			return config.Plugins{
-				Score: &config.PluginSet{
-					Enabled: []config.Plugin{
+		func(args frameworkplugins.ConfigProducerArgs) (schedulerapi.Plugins, []schedulerapi.PluginConfig) {
+			return schedulerapi.Plugins{
+				Score: &schedulerapi.PluginSet{
+					Enabled: []schedulerapi.Plugin{
 						{Name: scoreOneName, Weight: args.Weight}}}}, nil
 		})
 
 	configProducerRegistry.RegisterPriority(priorityTwoName,
-		func(args frameworkplugins.ConfigProducerArgs) (config.Plugins, []config.PluginConfig) {
-			return config.Plugins{
-				Score: &config.PluginSet{
-					Enabled: []config.Plugin{
+		func(args frameworkplugins.ConfigProducerArgs) (schedulerapi.Plugins, []schedulerapi.PluginConfig) {
+			return schedulerapi.Plugins{
+				Score: &schedulerapi.PluginSet{
+					Enabled: []schedulerapi.Plugin{
 						{Name: scoreTwoName, Weight: args.Weight}}}}, nil
 		})
 
@@ -773,9 +794,9 @@ func TestCreateWithFrameworkPlugins(t *testing.T) {
 	RegisterFitPredicate(predicateTwoName, PredicateFunc)
 	RegisterFitPredicate(predicateThreeName, PredicateFunc)
 	RegisterMandatoryFitPredicate(predicateFourName, PredicateFunc)
-	RegisterPriorityFunction(priorityOneName, PriorityFunc, 1)
-	RegisterPriorityFunction(priorityTwoName, PriorityFunc, 1)
-	RegisterPriorityFunction(priorityThreeName, PriorityFunc, 1)
+	RegisterPriorityMapReduceFunction(priorityOneName, PriorityFunc, nil, 1)
+	RegisterPriorityMapReduceFunction(priorityTwoName, PriorityFunc, nil, 1)
+	RegisterPriorityMapReduceFunction(priorityThreeName, PriorityFunc, nil, 1)
 
 	configData = []byte(`{
 		"kind" : "Policy",
@@ -791,7 +812,7 @@ func TestCreateWithFrameworkPlugins(t *testing.T) {
 			{"name" : "PriorityTwo", "weight" : 1},
 			{"name" : "PriorityThree", "weight" : 1}		]
 	}`)
-	if err := runtime.DecodeInto(latestschedulerapi.Codec, configData, &policy); err != nil {
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), configData, &policy); err != nil {
 		t.Errorf("Invalid configuration: %v", err)
 	}
 
@@ -822,32 +843,32 @@ func TestCreateWithFrameworkPlugins(t *testing.T) {
 	}
 
 	// Verify the aggregated configuration.
-	wantPlugins := config.Plugins{
-		QueueSort: &config.PluginSet{},
-		PreFilter: &config.PluginSet{},
-		Filter: &config.PluginSet{
-			Enabled: []config.Plugin{
+	wantPlugins := schedulerapi.Plugins{
+		QueueSort: &schedulerapi.PluginSet{},
+		PreFilter: &schedulerapi.PluginSet{},
+		Filter: &schedulerapi.PluginSet{
+			Enabled: []schedulerapi.Plugin{
 				{Name: filterOneName},
 				{Name: filterTwoName},
 			},
 		},
-		PostFilter: &config.PluginSet{},
-		Score: &config.PluginSet{
-			Enabled: []config.Plugin{
+		PostFilter: &schedulerapi.PluginSet{},
+		Score: &schedulerapi.PluginSet{
+			Enabled: []schedulerapi.Plugin{
 				{Name: scoreOneName, Weight: 2},
 				{Name: scoreTwoName, Weight: 1},
 			},
 		},
-		Reserve:   &config.PluginSet{},
-		Permit:    &config.PluginSet{},
-		PreBind:   &config.PluginSet{},
-		Bind:      &config.PluginSet{},
-		PostBind:  &config.PluginSet{},
-		Unreserve: &config.PluginSet{},
+		Reserve:   &schedulerapi.PluginSet{},
+		Permit:    &schedulerapi.PluginSet{},
+		PreBind:   &schedulerapi.PluginSet{},
+		Bind:      &schedulerapi.PluginSet{},
+		PostBind:  &schedulerapi.PluginSet{},
+		Unreserve: &schedulerapi.PluginSet{},
 	}
 
-	trans := cmp.Transformer("Sort", func(in []config.Plugin) []config.Plugin {
-		out := append([]config.Plugin(nil), in...) // Copy input to avoid mutating it
+	trans := cmp.Transformer("Sort", func(in []schedulerapi.Plugin) []schedulerapi.Plugin {
+		out := append([]schedulerapi.Plugin(nil), in...) // Copy input to avoid mutating it
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		return out
 	})

@@ -261,7 +261,7 @@ const (
 	MinExternalEtcdVersion = "3.2.18"
 
 	// DefaultEtcdVersion indicates the default etcd version that kubeadm uses
-	DefaultEtcdVersion = "3.3.17-0"
+	DefaultEtcdVersion = "3.4.3-0"
 
 	// PauseVersion indicates the default pause image version for kubeadm
 	PauseVersion = "3.1"
@@ -334,7 +334,7 @@ const (
 	KubeDNSVersion = "1.14.13"
 
 	// CoreDNSVersion is the version of CoreDNS to be deployed if it is used
-	CoreDNSVersion = "1.6.2"
+	CoreDNSVersion = "1.6.5"
 
 	// ClusterConfigurationKind is the string kind value for the ClusterConfiguration struct
 	ClusterConfigurationKind = "ClusterConfiguration"
@@ -361,14 +361,12 @@ const (
 	// KubeletPort is the default port for the kubelet server on each host machine.
 	// May be overridden by a flag at startup.
 	KubeletPort = 10250
-	// InsecureSchedulerPort is the default port for the scheduler status server.
+	// KubeSchedulerPort is the default port for the scheduler status server.
 	// May be overridden by a flag at startup.
-	// Deprecated: use the secure KubeSchedulerPort instead.
-	InsecureSchedulerPort = 10251
-	// InsecureKubeControllerManagerPort is the default port for the controller manager status server.
+	KubeSchedulerPort = 10259
+	// KubeControllerManagerPort is the default port for the controller manager status server.
 	// May be overridden by a flag at startup.
-	// Deprecated: use the secure KubeControllerManagerPort instead.
-	InsecureKubeControllerManagerPort = 10252
+	KubeControllerManagerPort = 10257
 
 	// Mode* constants were copied from pkg/kubeapiserver/authorizer/modes
 	// to avoid kubeadm dependency on the internal module
@@ -424,9 +422,9 @@ var (
 		13: "3.2.24",
 		14: "3.3.10",
 		15: "3.3.10",
-		16: "3.3.15-0",
-		17: "3.3.17-0",
-		18: "3.3.17-0",
+		16: "3.3.17-0",
+		17: "3.4.3-0",
+		18: "3.4.3-0",
 	}
 
 	// KubeadmCertsClusterRoleName sets the name for the ClusterRole that allows

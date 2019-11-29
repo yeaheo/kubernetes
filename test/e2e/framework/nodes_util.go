@@ -28,11 +28,13 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+
+	// TODO: Remove the following imports (ref: https://github.com/kubernetes/kubernetes/issues/81245)
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
 )
 
-const etcdImage = "3.3.17-0"
+const etcdImage = "3.4.3-0"
 
 // EtcdUpgrade upgrades etcd on GCE.
 func EtcdUpgrade(targetStorage, targetVersion string) error {
@@ -269,7 +271,7 @@ func nodePoolsGKE() ([]string, error) {
 		locationParamGKE(),
 		"list",
 		fmt.Sprintf("--cluster=%s", TestContext.CloudConfig.Cluster),
-		`--format="get(name)"`,
+		"--format=get(name)",
 	}
 	stdout, _, err := RunCmd("gcloud", appendContainerCommandGroupIfNeeded(args)...)
 	if err != nil {
@@ -279,43 +281,6 @@ func nodePoolsGKE() ([]string, error) {
 		return []string{}, nil
 	}
 	return strings.Fields(stdout), nil
-}
-
-// MigTemplate (GCE-only) returns the name of the MIG template that the
-// nodes of the cluster use.
-func MigTemplate() (string, error) {
-	var errLast error
-	var templ string
-	key := "instanceTemplate"
-	if wait.Poll(Poll, SingleCallTimeout, func() (bool, error) {
-		// TODO(mikedanese): make this hit the compute API directly instead of
-		// shelling out to gcloud.
-		// An `instance-groups managed describe` call outputs what we want to stdout.
-		output, _, err := retryCmd("gcloud", "compute", "instance-groups", "managed",
-			fmt.Sprintf("--project=%s", TestContext.CloudConfig.ProjectID),
-			"describe",
-			fmt.Sprintf("--zone=%s", TestContext.CloudConfig.Zone),
-			TestContext.CloudConfig.NodeInstanceGroup)
-		if err != nil {
-			errLast = fmt.Errorf("gcloud compute instance-groups managed describe call failed with err: %v", err)
-			return false, nil
-		}
-
-		// The 'describe' call probably succeeded; parse the output and try to
-		// find the line that looks like "instanceTemplate: url/to/<templ>" and
-		// return <templ>.
-		if val := ParseKVLines(output, key); len(val) > 0 {
-			url := strings.Split(val, "/")
-			templ = url[len(url)-1]
-			Logf("MIG group %s using template: %s", TestContext.CloudConfig.NodeInstanceGroup, templ)
-			return true, nil
-		}
-		errLast = fmt.Errorf("couldn't find %s in output to get MIG template. Output: %s", key, output)
-		return false, nil
-	}) != nil {
-		return "", fmt.Errorf("MigTemplate() failed with last error: %v", errLast)
-	}
-	return templ, nil
 }
 
 func gceUpgradeScript() string {
@@ -400,9 +365,4 @@ func (k *NodeKiller) kill(nodes []v1.Node) {
 		}()
 	}
 	wg.Wait()
-}
-
-// DeleteNodeOnCloudProvider deletes the specified node.
-func DeleteNodeOnCloudProvider(node *v1.Node) error {
-	return TestContext.CloudConfig.Provider.DeleteNode(node)
 }

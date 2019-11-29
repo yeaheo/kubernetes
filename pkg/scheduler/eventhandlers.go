@@ -204,6 +204,7 @@ func (sched *Scheduler) deletePodFromSchedulingQueue(obj interface{}) {
 		// Volume binder only wants to keep unassigned pods
 		sched.VolumeBinder.DeletePodBindings(pod)
 	}
+	sched.Framework.RejectWaitingPod(pod.UID)
 }
 
 func (sched *Scheduler) addPodToCache(obj interface{}) {
@@ -397,7 +398,7 @@ func AddAllEventHandlers(
 	)
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.CSINodeInfo) {
-		informerFactory.Storage().V1beta1().CSINodes().Informer().AddEventHandler(
+		informerFactory.Storage().V1().CSINodes().Informer().AddEventHandler(
 			cache.ResourceEventHandlerFuncs{
 				AddFunc:    sched.onCSINodeAdd,
 				UpdateFunc: sched.onCSINodeUpdate,

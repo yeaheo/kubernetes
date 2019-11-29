@@ -51,7 +51,7 @@
 #  - Document functions using proper syntax:
 #    https://technet.microsoft.com/en-us/library/hh847834(v=wps.620).aspx
 
-$INFRA_CONTAINER = 'mcr.microsoft.com/k8s/core/pause:1.0.0'
+$INFRA_CONTAINER = 'gcr.io/gke-release/pause-win:1.0.0'
 $GCE_METADATA_SERVER = "169.254.169.254"
 # The "management" interface is used by the kubelet and by Windows pods to talk
 # to the rest of the Kubernetes cluster *without NAT*. This interface does not
@@ -298,7 +298,7 @@ function Download-HelperScripts {
     return
   }
   MustDownload-File -OutFile ${env:K8S_DIR}\hns.psm1 `
-    -URLs "https://github.com/Microsoft/SDN/raw/master/Kubernetes/windows/hns.psm1"
+    -URLs "https://www.googleapis.com/storage/v1/b/gke-release/o/winnode%2fconfig%2fsdn%2fmaster%2fhns.psm1?alt=media"
 }
 
 # Takes the Windows version string from the cluster bash scripts (e.g.
@@ -780,7 +780,9 @@ function Configure-HostNetworkingService {
     netsh interface ipv4 set interface "${vnic_name}" forwarding=enabled
   }
 
-  Get-HNSPolicyList | Remove-HnsPolicyList
+  Try {
+    Get-HNSPolicyList | Remove-HnsPolicyList
+  } Catch { }
 
   # Add a route from the management NIC to the pod CIDR.
   #
@@ -824,7 +826,7 @@ function Configure-HostNetworkingService {
 function Configure-GcePdTools {
   if (ShouldWrite-File ${env:K8S_DIR}\GetGcePdName.dll) {
     MustDownload-File -OutFile ${env:K8S_DIR}\GetGcePdName.dll `
-      -URLs "https://github.com/pjh/gce-tools/raw/master/GceTools/GetGcePdName/GetGcePdName.dll"
+      -URLs "https://www.googleapis.com/storage/v1/b/gke-release/o/winnode%2fconfig%2fgce-tools%2fmaster%2fGetGcePdName%2fGetGcePdName.dll?alt=media"
   }
   if (-not (Test-Path $PsHome\profile.ps1)) {
     New-Item -path $PsHome\profile.ps1 -type file
@@ -1098,12 +1100,25 @@ function Start-WorkerServices {
   # TODO(pjh): still getting errors like these in kube-proxy log:
   # E1023 04:03:58.143449    4840 reflector.go:205] k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/factory.go:129: Failed to list *core.Endpoints: Get https://35.239.84.171/api/v1/endpoints?limit=500&resourceVersion=0: dial tcp 35.239.84.171:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
   # E1023 04:03:58.150266    4840 reflector.go:205] k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion/factory.go:129: Failed to list *core.Service: Get https://35.239.84.171/api/v1/services?limit=500&resourceVersion=0: dial tcp 35.239.84.171:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
-
-  Log_Todo ("verify that jobs are still running; print more details about " +
-            "the background jobs.")
-  Log-Output "$(Get-Service kube* | Out-String)"
+  WaitFor_KubeletAndKubeProxyReady
   Verify_GceMetadataServerRouteIsPresent
   Log-Output "Kubernetes components started successfully"
+}
+
+# Wait for kubelet & kube-proxy to be ready within 10s.
+function WaitFor_KubeletAndKubeProxyReady {
+  $waited = 0
+  $timeout = 10
+  while (((Get-Service kube-proxy).Status -ne 'Running' -or (Get-Service kubelet).Status -ne 'Running') -and $waited -lt $timeout) {
+    Start-Sleep 1
+    $waited++
+  }
+
+  # Timeout occurred
+  if ($waited -ge $timeout) {
+    Log-Output "$(Get-Service kube* | Out-String)"
+    Throw ("Timeout while waiting ${timeout} seconds for kubelet & kube-proxy services to start")
+  }
 }
 
 # Runs 'kubectl get nodes'.
@@ -1244,8 +1259,8 @@ function Install-LoggingAgent {
     return
   }
 
-  $url = ("https://dl.google.com/cloudagents/windows/" +
-          "StackdriverLogging-${STACKDRIVER_VERSION}.exe")
+  $url = ("https://www.googleapis.com/storage/v1/b/gke-release/o/winnode%2fstackdriver%2f" +
+          "StackdriverLogging-${STACKDRIVER_VERSION}.exe?alt=media")
   $tmp_dir = 'C:\stackdriver_tmp'
   New-Item $tmp_dir -ItemType 'directory' -Force | Out-Null
   $installer_file = "${tmp_dir}\StackdriverLogging-${STACKDRIVER_VERSION}.exe"

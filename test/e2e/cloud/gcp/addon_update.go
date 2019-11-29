@@ -27,13 +27,14 @@ import (
 	"golang.org/x/crypto/ssh"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
+	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
-	"github.com/onsi/gomega"
 )
 
 // TODO: it would probably be slightly better to build up the objects
@@ -245,7 +246,7 @@ var _ = SIGDescribe("Addon update", func() {
 		framework.SkipUnlessProviderIs("gce")
 
 		//these tests are long, so I squeezed several cases in one scenario
-		gomega.Expect(sshClient).NotTo(gomega.BeNil())
+		framework.ExpectNotEqual(sshClient, nil)
 		dir = f.Namespace.Name // we use it only to give a unique string for each test execution
 
 		temporaryRemotePathPrefix := "addon-test-dir"
@@ -345,16 +346,85 @@ func waitForServiceInAddonTest(c clientset.Interface, addonNamespace, name strin
 }
 
 func waitForReplicationControllerInAddonTest(c clientset.Interface, addonNamespace, name string, exist bool) {
-	framework.ExpectNoError(framework.WaitForReplicationController(c, addonNamespace, name, exist, addonTestPollInterval, addonTestPollTimeout))
+	framework.ExpectNoError(waitForReplicationController(c, addonNamespace, name, exist, addonTestPollInterval, addonTestPollTimeout))
 }
 
 func waitForServicewithSelectorInAddonTest(c clientset.Interface, addonNamespace string, exist bool, selector labels.Selector) {
-	framework.ExpectNoError(framework.WaitForServiceWithSelector(c, addonNamespace, selector, exist, addonTestPollInterval, addonTestPollTimeout))
+	framework.ExpectNoError(waitForServiceWithSelector(c, addonNamespace, selector, exist, addonTestPollInterval, addonTestPollTimeout))
 }
 
 func waitForReplicationControllerwithSelectorInAddonTest(c clientset.Interface, addonNamespace string, exist bool, selector labels.Selector) {
-	framework.ExpectNoError(framework.WaitForReplicationControllerwithSelector(c, addonNamespace, selector, exist, addonTestPollInterval,
+	framework.ExpectNoError(waitForReplicationControllerWithSelector(c, addonNamespace, selector, exist, addonTestPollInterval,
 		addonTestPollTimeout))
+}
+
+// waitForReplicationController waits until the RC appears (exist == true), or disappears (exist == false)
+func waitForReplicationController(c clientset.Interface, namespace, name string, exist bool, interval, timeout time.Duration) error {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		_, err := c.CoreV1().ReplicationControllers(namespace).Get(name, metav1.GetOptions{})
+		if err != nil {
+			framework.Logf("Get ReplicationController %s in namespace %s failed (%v).", name, namespace, err)
+			return !exist, nil
+		}
+		framework.Logf("ReplicationController %s in namespace %s found.", name, namespace)
+		return exist, nil
+	})
+	if err != nil {
+		stateMsg := map[bool]string{true: "to appear", false: "to disappear"}
+		return fmt.Errorf("error waiting for ReplicationController %s/%s %s: %v", namespace, name, stateMsg[exist], err)
+	}
+	return nil
+}
+
+// waitForServiceWithSelector waits until any service with given selector appears (exist == true), or disappears (exist == false)
+func waitForServiceWithSelector(c clientset.Interface, namespace string, selector labels.Selector, exist bool, interval,
+	timeout time.Duration) error {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		services, err := c.CoreV1().Services(namespace).List(metav1.ListOptions{LabelSelector: selector.String()})
+		switch {
+		case len(services.Items) != 0:
+			framework.Logf("Service with %s in namespace %s found.", selector.String(), namespace)
+			return exist, nil
+		case len(services.Items) == 0:
+			framework.Logf("Service with %s in namespace %s disappeared.", selector.String(), namespace)
+			return !exist, nil
+		case !testutils.IsRetryableAPIError(err):
+			framework.Logf("Non-retryable failure while listing service.")
+			return false, err
+		default:
+			framework.Logf("List service with %s in namespace %s failed: %v", selector.String(), namespace, err)
+			return false, nil
+		}
+	})
+	if err != nil {
+		stateMsg := map[bool]string{true: "to appear", false: "to disappear"}
+		return fmt.Errorf("error waiting for service with %s in namespace %s %s: %v", selector.String(), namespace, stateMsg[exist], err)
+	}
+	return nil
+}
+
+// waitForReplicationControllerWithSelector waits until any RC with given selector appears (exist == true), or disappears (exist == false)
+func waitForReplicationControllerWithSelector(c clientset.Interface, namespace string, selector labels.Selector, exist bool, interval,
+	timeout time.Duration) error {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		rcs, err := c.CoreV1().ReplicationControllers(namespace).List(metav1.ListOptions{LabelSelector: selector.String()})
+		switch {
+		case len(rcs.Items) != 0:
+			framework.Logf("ReplicationController with %s in namespace %s found.", selector.String(), namespace)
+			return exist, nil
+		case len(rcs.Items) == 0:
+			framework.Logf("ReplicationController with %s in namespace %s disappeared.", selector.String(), namespace)
+			return !exist, nil
+		default:
+			framework.Logf("List ReplicationController with %s in namespace %s failed: %v", selector.String(), namespace, err)
+			return false, nil
+		}
+	})
+	if err != nil {
+		stateMsg := map[bool]string{true: "to appear", false: "to disappear"}
+		return fmt.Errorf("error waiting for ReplicationControllers with %s in namespace %s %s: %v", selector.String(), namespace, stateMsg[exist], err)
+	}
+	return nil
 }
 
 // TODO use the ssh.SSH code, either adding an SCP to it or copying files
